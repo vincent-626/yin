@@ -8,7 +8,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     h_flex,
-    input::{Editor, EditorState, InputEvent, Position},
+    input::{Editor, EditorState, Input, InputEvent, Position},
     list::ListItem,
     notification::Notification,
     tab::{Tab, TabBar},
@@ -111,6 +111,17 @@ fn read_for_display(full: &std::path::Path) -> Result<String, String> {
         return Err("This is a binary file.".into());
     }
     String::from_utf8(bytes).map_err(|_| "This file isn't UTF-8 text.".into())
+}
+
+/// `"42"` or `"42:7"`, one-based.
+fn parse_line_target(text: &str) -> Option<(u32, u32)> {
+    let mut parts = text.trim().splitn(2, ':');
+    let line = parts.next()?.trim().parse().ok().filter(|line| *line > 0)?;
+    let column = match parts.next() {
+        Some(column) => column.trim().parse().ok().filter(|column| *column > 0)?,
+        None => 1,
+    };
+    Some((line, column))
 }
 
 fn tree_items(nodes: &[yin_fs::Node], expanded: &HashSet<String>) -> Vec<TreeItem> {
@@ -460,7 +471,60 @@ impl Workspace {
         }
     }
 
+    /// Asks for a line, or `line:column`, and moves the cursor there.
+    pub(super) fn prompt_go_to_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.active_file else {
+            return;
+        };
+        if !matches!(
+            self.open_files.get(ix).map(|file| &file.content),
+            Some(FileContent::Text { .. })
+        ) {
+            return;
+        }
+        let input = self.goto_input.clone();
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+        let this = cx.entity().downgrade();
+        // The dialog takes focus as it opens; hand it to the input afterwards.
+        let focus_on_open = std::rc::Rc::new(std::cell::Cell::new(true));
+        window.open_alert_dialog(cx, move |alert, window, cx| {
+            if focus_on_open.replace(false) {
+                let input = input.clone();
+                window.defer(cx, move |window, cx| {
+                    input.update(cx, |input, cx| input.focus(window, cx));
+                });
+            }
+            let input = input.clone();
+            let this = this.clone();
+            alert
+                .title("Go to line")
+                .child(Input::new(&input))
+                .on_ok(move |_, window, cx| {
+                    let Some((line, column)) = parse_line_target(&input.read(cx).value()) else {
+                        return false;
+                    };
+                    this.update(cx, |this, cx| {
+                        this.go_to_position(ix, line, column, window, cx)
+                    })
+                    .ok();
+                    true
+                })
+        });
+    }
+
     fn go_to_line(&mut self, ix: usize, line: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_position(ix, line, 1, window, cx);
+    }
+
+    /// Moves the cursor to a one-based line and column.
+    fn go_to_position(
+        &mut self,
+        ix: usize,
+        line: u32,
+        column: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(file) = self.open_files.get_mut(ix) else {
             return;
         };
@@ -469,7 +533,11 @@ impl Workspace {
             file.preview = false;
             let editor = editor.clone();
             editor.update(cx, |editor, cx| {
-                editor.set_cursor_position(Position::new(line.saturating_sub(1), 0), window, cx);
+                editor.set_cursor_position(
+                    Position::new(line.saturating_sub(1), column.saturating_sub(1)),
+                    window,
+                    cx,
+                );
             });
             editor.read(cx).focus_handle(cx).focus(window, cx);
         }
@@ -766,6 +834,15 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_line_targets() {
+        assert_eq!(parse_line_target("42"), Some((42, 1)));
+        assert_eq!(parse_line_target(" 42:7 "), Some((42, 7)));
+        assert_eq!(parse_line_target("0"), None);
+        assert_eq!(parse_line_target("x"), None);
+        assert_eq!(parse_line_target("3:"), None);
+    }
 
     #[test]
     fn languages_by_name_and_extension() {

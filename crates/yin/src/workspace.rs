@@ -75,6 +75,7 @@ pub(crate) mod actions {
             FindFile,
             ProjectSearch,
             SaveFile,
+            GoToLine,
         ]
     );
 }
@@ -145,6 +146,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
         KeyBinding::new("cmd-s", SaveFile, Some("Workspace")),
+        KeyBinding::new("ctrl-g", GoToLine, Some("Workspace")),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
         KeyBinding::new("down", SelectNext, Some(SEARCH_CONTEXT)),
@@ -221,6 +223,7 @@ pub struct Workspace {
     search_focus: FocusHandle,
     search_scroll: UniformListScrollHandle,
     _search_task: Task<()>,
+    goto_input: Entity<gpui_kit::component::input::InputState>,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -309,6 +312,10 @@ impl Workspace {
             search_focus: cx.focus_handle().tab_stop(true),
             search_scroll: UniformListScrollHandle::new(),
             _search_task: Task::ready(()),
+            goto_input: cx.new(|cx| {
+                gpui_kit::component::input::InputState::new(window, cx)
+                    .placeholder("Line, or line:column")
+            }),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
@@ -1184,6 +1191,9 @@ impl Render for Workspace {
             }))
             .on_action(
                 cx.listener(|this, _: &SaveFile, window, cx| this.save_active_file(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &GoToLine, window, cx| this.prompt_go_to_line(window, cx)),
             )
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
