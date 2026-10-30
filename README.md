@@ -1,103 +1,108 @@
 # yin
 
-A native, dark-only code workspace for reviewing changes, running git, and reading code. Built on GPUI.
+A fast, native code workspace for reviewing changes, running git and reading
+code — built for the way coding agents work.
 
-See [docs/PLAN.md](docs/PLAN.md).
+![Reviewing a change in yin](docs/screenshots/review.png)
 
-```bash
-script/install          # builds yin.app into ~/Applications and a `yin` command
-yin ~/Code/some-repo    # or `yin` inside a repository
-```
+When an agent writes most of the code, an editor's job shrinks to reviewing what
+changed, committing it, and reading around it. yin does that and little else:
+it opens on what changed, follows the working tree live while the agent edits,
+and keeps git one keystroke away. It is written in Rust on
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), Zed's
+GPU-accelerated UI framework, so it starts instantly and scrolls smoothly.
 
-For development: `cargo run -- /path/to/repo`, and optionally
-`script/bootstrap-refs` for the reference checkouts agents read.
+It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
 
-## Keys
+## Features
 
-| Where | Key | Does |
-|---|---|---|
-| Anywhere | `cmd-o` | Open a repository |
-| | `cmd-1` / `cmd-2` / `cmd-3` | Changes / History / Files |
-| | `cmd-shift-p` | Command palette: every action and its key |
-| | `cmd-p` | Go to file |
-| | `cmd-shift-f` | Search the project |
-| | `cmd-w` | Close file tab |
-| | `cmd-shift-v` | Markdown preview / source |
-| | `cmd-r` | Refresh |
-| | `cmd-b` | Toggle sidebar |
-| | `cmd-shift-d` | Unified / split diff |
-| | `cmd-enter` | Commit staged changes |
-| | `cmd-alt-s` / `cmd-alt-u` | Stage all / unstage all |
-| | `[` / `]` | Previous / next file, commit, tab or result |
-| | `escape` | Back to the sidebar |
-| Changes list | `j` / `k` | Move |
-| | `space` | Stage / unstage file; mark a conflict resolved |
-| | `enter` | Read the diff |
-| | `c` | Write the commit message |
-| | `cmd-backspace` | Discard file (untracked: to Trash) / drop stash |
-| | `b` | Switch or create branch |
-| | `f` / `p` / `shift-p` | Fetch / pull / push |
-| | `s` / `shift-s` | Stash all / pop stash |
-| | `r` / `shift-r` | Mark file / everything reviewed (unmarked again when it changes) |
-| | `h` | Hide or show reviewed files |
-| | `w` (or `cmd-alt-w`) | Switch worktree |
-| | `a` | Review all changes in one diff / one file at a time |
-| Diff | `shift-up` / `shift-down` | Select lines |
-| | `space` / `s` | Stage (or unstage) selected lines / their hunk |
-| History list | `j` / `k`, `enter` | Move, read the diff |
-| File tree | arrows, `enter` | Move, open/close folders, open file |
-| Search results | `j` / `k`, `enter` | Move, open at the line |
-| File view | `cmd-s` | Save |
-| | `cmd-f` / `cmd-alt-f` | Find / replace in file (the first character typed is sometimes lost; known component issue) |
-| | `ctrl-g` | Go to line (`line` or `line:column`) |
-| | `f12` / cmd-click | Go to definition |
-| | `shift-f12` | Find references |
-| | `cmd-alt-b` | Blame (click a commit to open it) |
-| | `cmd-alt-h` | History of this file |
-| | hover | Type and docs (needs the language server installed) |
+**Review**
+- The working tree's changes, staged, unstaged and untracked, with a
+  syntax-highlighted diff that updates as files change on disk.
+- One file at a time, or every change in one scrolling diff.
+- Stage or unstage whole files, hunks or individual lines.
+- Mark files reviewed and hide them; a file comes back the moment an agent
+  touches it again.
 
-## Custom keys
+![Every change in one diff, with a reviewed file struck through](docs/screenshots/all-changes.png)
 
-Bindings in `~/.config/yin/keymap.json` apply over the defaults. Actions are
-named `yin::<Name>`, as in `crates/yin/src/workspace.rs` (`Commit`,
-`SelectNext`, `ShowHistory`, …); contexts are `Workspace`, `Changes`,
-`History`, `Files`, `SearchResults`, `Diff` and `Input`. Problems show as a
-notification at launch.
+**Git**
+- Commit and amend; hook output shows when a hook fails.
+- Fetch, pull and push. A diverged pull offers to rebase; a rejected push offers
+  a force push with lease.
+- Switch or create branches, stash, and resolve merge conflicts in the diff.
+- History, per-file history, blame, and a picker for worktrees.
 
-```json
-[
-  { "key": "cmd-k", "action": "yin::ShowHistory" },
-  { "key": "ctrl-n", "action": "yin::SelectNext", "context": "Changes" }
-]
-```
+![Commit history](docs/screenshots/history.png)
 
-Open tabs, the sidebar tab and width, and the diff mode are restored per
-repository; the window's size and position are restored too.
+**Read and navigate**
+- File tree coloured by git status, fuzzy file finder, project search.
+- Rendered markdown, light editing with save, find and go to line.
+- Go to definition, find references, hover and diagnostics through language
+  servers (rust-analyzer, gopls, typescript-language-server, pyright, clangd),
+  started automatically when installed.
 
-## Releases
+![Files and a rendered markdown document](docs/screenshots/files.png)
 
-Pushing a tag that matches the version in `crates/yin/Cargo.toml` builds
-`yin.app` on GitHub Actions and attaches it to a GitHub release:
+**Everywhere**
+- Keyboard first, with a command palette (`cmd-shift-p`) listing every action
+  and its key. Keys are customisable.
+- Each repository reopens with its tabs and layout.
 
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+## Install
 
-Install the latest release on any Apple Silicon Mac, no Rust needed:
+On an Apple Silicon Mac with macOS 13 or later and git:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vincent-626/yin/main/script/install-release | bash
 ```
 
-The app is ad-hoc signed, not notarized; the installer checks the download's
-checksum and clears its quarantine so macOS opens it. Downloading the zip by hand instead,
-right-click the app and choose Open the first time. Signing for real needs an
-Apple Developer ID ($99/year), then `codesign` with it and `notarytool` in the
-release workflow.
+This installs `yin.app` into `~/Applications` and a `yin` command into
+`~/.local/bin`. Then open a repository:
 
-CI (`.github/workflows/ci.yml`) runs format, clippy and every test on macOS for
-each push to `main` that touches code, and for pull requests.
+```bash
+yin ~/Code/some-repo     # or just `yin` inside one
+```
+
+The app is not notarized, so the installer verifies the download's checksum
+and clears the quarantine flag that would otherwise stop macOS opening it. To
+build from source instead, see [docs/development.md](docs/development.md).
+
+Language features need the server for each language on your `PATH`; yin uses
+them when it finds them and says so when it doesn't.
+
+## Using it
+
+yin opens on the **Changes** tab. Move with `j`/`k`, stage with `space`, press
+`c` to write a message and `cmd-enter` to commit. `a` switches between one file
+and every change. `cmd-1` to `cmd-3` switch between Changes, History and Files;
+`cmd-p` finds a file and `cmd-shift-f` searches the project.
+
+Everything else is in the command palette (`cmd-shift-p`) and in
+[docs/keys.md](docs/keys.md), along with how to rebind keys.
+
+## Status
+
+yin is a personal tool, shared as it is. It covers what its author needs every
+day and deliberately leaves out the rest: there is no terminal, debugger,
+extension system, light theme, or support for Intel Macs, Linux or Windows.
+
+Known issues come from the UI component library yin builds on and are listed in
+[docs/PLAN.md](docs/PLAN.md#known-issues-upstream-gpui-component-081), which
+also records how yin was planned and built.
+
+## Built with
+
+- [GPUI](https://github.com/zed-industries/zed) from Zed, via
+  [gpui-kit and gpui-component](https://github.com/longbridge/gpui-component)
+- The `git` command line for every git operation, so hooks, signing and
+  credentials behave as they do in a terminal
+- [ignore](https://crates.io/crates/ignore) and
+  [grep-searcher](https://crates.io/crates/grep-searcher) from ripgrep,
+  [nucleo](https://github.com/helix-editor/nucleo) from Helix,
+  [tree-sitter](https://tree-sitter.github.io) and
+  [Lucide](https://lucide.dev) icons
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)

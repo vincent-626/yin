@@ -57,7 +57,10 @@ impl Workspace {
                                 Err(_) => "missing".to_owned(),
                             };
                             Entry {
-                                label: format!("{branch} · {state} · {}", tilde(&path)),
+                                label: format!(
+                                    "{branch} · {state} · {}",
+                                    crate::state::tilde(&path)
+                                ),
                                 is_current: path == current,
                                 path,
                             }
@@ -132,15 +135,5 @@ impl Workspace {
                     )
                 })
         });
-    }
-}
-
-/// `~/Code/yin` rather than `/Users/me/Code/yin`.
-fn tilde(path: &std::path::Path) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let shown = path.display().to_string();
-    match shown.strip_prefix(&home) {
-        Some(rest) if !home.is_empty() => format!("~{rest}"),
-        _ => shown,
     }
 }

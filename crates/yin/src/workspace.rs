@@ -1583,7 +1583,7 @@ impl Render for Workspace {
                         div()
                             .text_xs()
                             .text_color(muted)
-                            .child(self.repo.workdir().display().to_string()),
+                            .child(crate::state::tilde(self.repo.workdir())),
                     )
                     .when_some(self.error.clone(), |this, error| {
                         this.right(

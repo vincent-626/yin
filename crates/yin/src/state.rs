@@ -75,6 +75,18 @@ pub fn save_session(workdir: &Path, session: &Session) {
     }
 }
 
+/// `~/Code/yin` rather than `/Users/me/Code/yin`.
+pub fn tilde(path: &Path) -> String {
+    let shown = path.display().to_string();
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => match shown.strip_prefix(&home) {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+            _ => shown,
+        },
+        _ => shown,
+    }
+}
+
 pub fn last_repo() -> Option<PathBuf> {
     let contents = std::fs::read_to_string(state_dir()?.join("last-repo")).ok()?;
     let path = contents.trim();
