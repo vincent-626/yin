@@ -31,7 +31,6 @@ mod actions {
     gpui_kit::actions!(
         yin,
         [
-            Quit,
             Refresh,
             ToggleSidebar,
             ToggleDiffMode,
@@ -54,7 +53,6 @@ const CHANGES_CONTEXT: &str = "Changes";
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-r", Refresh, Some("Workspace")),
         KeyBinding::new("cmd-b", ToggleSidebar, Some("Workspace")),
         KeyBinding::new("cmd-shift-d", ToggleDiffMode, Some("Workspace")),
@@ -101,6 +99,7 @@ pub struct Workspace {
     _operation_task: Task<()>,
     _watcher: Option<RepoWatcher>,
     _watch_task: Task<()>,
+    _relayout_task: Task<()>,
 }
 
 impl Workspace {
@@ -108,6 +107,8 @@ impl Workspace {
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
+        cx.observe_window_bounds(window, |this, _, cx| this.schedule_relayout(cx))
+            .detach();
         let changes_focus = cx.focus_handle().tab_stop(true);
         changes_focus.focus(window, cx);
         let commit_message = cx.new(|cx| {
@@ -152,6 +153,7 @@ impl Workspace {
             _operation_task: Task::ready(()),
             _watcher: None,
             _watch_task: Task::ready(()),
+            _relayout_task: Task::ready(()),
         };
         this.watch(cx);
         cx.observe_window_activation(window, |this, window, cx| {
@@ -184,6 +186,25 @@ impl Workspace {
                 if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
                     break;
                 }
+            }
+        });
+    }
+
+    /// The Diff learns its viewport while painting, and a notify during paint
+    /// doesn't schedule another frame, so rows can keep a stale width: the
+    /// window opens at a default size and then grows, or the user resizes it.
+    /// Redraw twice, once to measure and once to lay out at the new width.
+    fn schedule_relayout(&mut self, cx: &mut Context<Self>) {
+        self._relayout_task = cx.spawn(async move |this, cx| {
+            for _ in 0..2 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
+                let Ok(()) = this.update(cx, |this, cx| {
+                    this.diff.update(cx, |_, cx| cx.notify());
+                }) else {
+                    return;
+                };
             }
         });
     }
@@ -290,6 +311,7 @@ impl Workspace {
         self.diff_key = Some(key);
         self.diff_patch = patch;
         self.diff.update(cx, |state, cx| state.set_files(files, cx));
+        self.schedule_relayout(cx);
         cx.notify();
     }
 
@@ -782,7 +804,6 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .on_action(|_: &Quit, _, cx| cx.quit())
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
                 this.sidebar_visible = !this.sidebar_visible;

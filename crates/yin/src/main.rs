@@ -1,5 +1,7 @@
 mod assets;
 mod changes;
+mod shell;
+mod state;
 mod watcher;
 mod workspace;
 
@@ -7,16 +9,12 @@ use std::path::PathBuf;
 
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
-use yin_git::Repository;
-
-use workspace::Workspace;
+use shell::Shell;
 
 fn main() {
-    let path = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let repo = match Repository::open(&path) {
+    let argument = std::env::args_os().nth(1).map(PathBuf::from);
+    let repo = match state::initial_repo(argument, std::env::current_dir().ok(), state::last_repo())
+    {
         Ok(repo) => repo,
         Err(error) => {
             eprintln!("yin: {error}");
@@ -28,6 +26,7 @@ fn main() {
         .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            shell::init(cx);
             workspace::init(cx);
             // Always yin: dark only, never follow the system appearance.
             Theme::change(ThemeMode::Dark, None, cx);
@@ -37,9 +36,15 @@ fn main() {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| Workspace::new(repo, window, cx))
+                cx.new(|cx| Shell::new(repo, window, cx))
             })
             .expect("failed to open window");
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
             cx.activate(true);
         });
 }
