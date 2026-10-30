@@ -322,6 +322,8 @@ fn reference_matches(root: &Path, locations: Vec<lsp_types::Location>) -> Vec<yi
             } else {
                 text.len()
             };
+            #[allow(clippy::single_range_in_vec_init)]
+            // One highlighted range, not a list of numbers.
             let ranges = if text.is_char_boundary(start) && text.is_char_boundary(end) {
                 vec![start..end]
             } else {

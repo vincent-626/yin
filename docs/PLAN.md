@@ -164,7 +164,8 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Find references (`shift-f12`), listed in the Search tab.
 
 ### Phase 6 — Agent-era review and polish
-- "Since last review": snapshot the reviewed tree, show only newer changes.
+- [x] "Since last review": `r` marks a file reviewed by content hash, `h` hides
+  reviewed files; an agent's later edit brings the file back. Saved per repo.
 - Worktrees view: all `git worktree list` entries with their dirty state.
 - Session restore (open tabs, panel sizes), keymap file in `~/.config/yin`.
 - Packaged `.app` bundle and `script/install`.

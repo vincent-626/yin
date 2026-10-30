@@ -1,5 +1,7 @@
 //! The flattened row model behind the Changes list.
 
+use std::collections::HashSet;
+
 use yin_git::{Change, DiffTarget, FileStatus, Stash, Status, StatusEntry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,12 +92,18 @@ pub fn change_for(section: Section, entry: &StatusEntry) -> Change {
     }
 }
 
-pub fn rows(status: &Status, stashes: &[Stash]) -> Vec<Row> {
+/// The list's rows. Files in `hidden` are left out, except conflicts, which
+/// always need attention.
+pub fn rows(status: &Status, stashes: &[Stash], hidden: &HashSet<String>) -> Vec<Row> {
+    let shown = |entry: &&StatusEntry| !hidden.contains(&entry.path);
     let sections: [(Section, Vec<&StatusEntry>); 4] = [
         (Section::Conflicts, status.conflicted().collect()),
-        (Section::Staged, status.staged().collect()),
-        (Section::Changes, status.unstaged().collect()),
-        (Section::Untracked, status.untracked().collect()),
+        (Section::Staged, status.staged().filter(shown).collect()),
+        (Section::Changes, status.unstaged().filter(shown).collect()),
+        (
+            Section::Untracked,
+            status.untracked().filter(shown).collect(),
+        ),
     ];
     let mut rows = Vec::with_capacity(status.entries.len() + 4);
     for (section, entries) in sections {
@@ -193,7 +201,7 @@ mod tests {
 
     #[test]
     fn groups_files_by_section() {
-        let rows = rows(&status(), &[]);
+        let rows = rows(&status(), &[], &HashSet::new());
         let shape: Vec<String> = rows
             .iter()
             .map(|row| match row {
@@ -218,7 +226,7 @@ mod tests {
 
     #[test]
     fn navigation_skips_headers_and_stops_at_ends() {
-        let rows = rows(&status(), &[]);
+        let rows = rows(&status(), &[], &HashSet::new());
         assert_eq!(step(&rows, None, 1), Some(1));
         assert_eq!(step(&rows, Some(2), 1), Some(4));
         assert_eq!(step(&rows, Some(4), -1), Some(2));
@@ -228,7 +236,7 @@ mod tests {
 
     #[test]
     fn reselects_same_file_or_neighbor() {
-        let rows = rows(&status(), &[]);
+        let rows = rows(&status(), &[], &HashSet::new());
         let key = FileKey {
             section: Section::Changes,
             path: "both.rs".into(),
@@ -240,5 +248,34 @@ mod tests {
         };
         assert_eq!(reselect(&rows, Some(&gone), Some(5)), Some(6));
         assert_eq!(reselect(&[], Some(&gone), Some(5)), None);
+    }
+}
+
+#[cfg(test)]
+mod hiding_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_files_drop_out_of_their_sections() {
+        let status = Status {
+            branch: Default::default(),
+            entries: vec![
+                StatusEntry {
+                    path: "a.rs".into(),
+                    orig_path: None,
+                    status: FileStatus::Untracked,
+                },
+                StatusEntry {
+                    path: "b.rs".into(),
+                    orig_path: None,
+                    status: FileStatus::Untracked,
+                },
+            ],
+        };
+        let hidden = HashSet::from(["a.rs".to_owned()]);
+        let rows = rows(&status, &[], &hidden);
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&rows[0], Row::Header { count: 1, .. }));
+        assert_eq!(rows[1].key().unwrap().path, "b.rs");
     }
 }

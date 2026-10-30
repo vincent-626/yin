@@ -34,6 +34,8 @@ cargo run -- /path/to/repo
 | | `b` | Switch or create branch |
 | | `f` / `p` / `shift-p` | Fetch / pull / push |
 | | `s` / `shift-s` | Stash all / pop stash |
+| | `r` / `shift-r` | Mark file / everything reviewed (unmarked again when it changes) |
+| | `h` | Hide or show reviewed files |
 | Diff | `shift-up` / `shift-down` | Select lines |
 | | `space` / `s` | Stage (or unstage) selected lines / their hunk |
 | History list | `j` / `k`, `enter` | Move, read the diff |

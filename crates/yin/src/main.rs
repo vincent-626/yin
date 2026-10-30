@@ -1,5 +1,6 @@
 mod assets;
 mod changes;
+mod review;
 mod shell;
 mod state;
 #[cfg(test)]

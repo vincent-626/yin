@@ -36,6 +36,7 @@ mod finder;
 mod history;
 mod lsp;
 mod remote;
+mod reviewing;
 mod search;
 mod staging;
 mod stash;
@@ -78,6 +79,9 @@ pub(crate) mod actions {
             SaveFile,
             GoToLine,
             FindReferences,
+            ToggleReviewed,
+            MarkAllReviewed,
+            ToggleHideReviewed,
         ]
     );
 }
@@ -140,6 +144,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("r", ToggleReviewed, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("shift-r", MarkAllReviewed, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("h", ToggleHideReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
@@ -180,6 +187,10 @@ pub struct Workspace {
     status: Status,
     stashes: Vec<yin_git::Stash>,
     merging: bool,
+    reviews: crate::review::Reviews,
+    review_hashes: std::collections::HashMap<String, u64>,
+    reviewed: Arc<std::collections::HashSet<String>>,
+    hide_reviewed: bool,
     rows: Arc<Vec<Row>>,
     selected: Option<usize>,
     loaded: bool,
@@ -241,6 +252,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(repo: Repository, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let reviews = crate::review::Reviews::load(repo.workdir());
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
@@ -273,6 +285,10 @@ impl Workspace {
             status: Status::default(),
             stashes: Vec::new(),
             merging: false,
+            reviews,
+            review_hashes: Default::default(),
+            reviewed: Arc::default(),
+            hide_reviewed: false,
             rows: Arc::default(),
             selected: None,
             loaded: false,
@@ -432,7 +448,8 @@ impl Workspace {
                 .background_spawn(async move {
                     let status = repo.status()?;
                     let merging = repo.merge_in_progress()?;
-                    anyhow::Ok((status, repo.stashes()?, merging))
+                    let hashes = reviewing::hash_changed_files(repo.workdir(), &status);
+                    anyhow::Ok((status, repo.stashes()?, merging, hashes))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -440,8 +457,9 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok((status, stashes, merging)) => {
+                    Ok((status, stashes, merging, hashes)) => {
                         this.merging = merging;
+                        this.install_review_hashes(hashes);
                         this.install_status(status, stashes, cx)
                     }
                     Err(error) => this.error = Some(error.to_string().into()),
@@ -458,13 +476,10 @@ impl Workspace {
         stashes: Vec<yin_git::Stash>,
         cx: &mut Context<Self>,
     ) {
-        let previous = self.selected_key();
-        let rows = changes::rows(&status, &stashes);
         self.stashes = stashes;
-        self.selected = changes::reselect(&rows, previous.as_ref(), self.selected);
-        self.rows = Arc::new(rows);
         self.status = status;
         self.loaded = true;
+        self.rebuild_rows(cx);
         if self.history_loaded && self.history_head != self.status.branch.oid {
             self.load_history(cx);
         }
@@ -474,6 +489,19 @@ impl Workspace {
         }
         // Reload even when the selection is unchanged: the file may have changed.
         self.load_diff(cx);
+    }
+
+    /// Rebuilds the Changes list from the last status, keeping the selection.
+    fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
+        let previous = self.selected_key();
+        let rows = changes::rows(&self.status, &self.stashes, &self.hidden_paths());
+        let selected = changes::reselect(&rows, previous.as_ref(), self.selected);
+        self.rows = Arc::new(rows);
+        self.selected = selected;
+        if self.selected_key() != previous {
+            self.load_diff(cx);
+        }
+        cx.notify();
     }
 
     fn select(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
@@ -874,10 +902,30 @@ impl Workspace {
         let selected = self.selected;
         let focused = self.changes_focus.is_focused(window);
         let owner = cx.entity().downgrade();
+        let reviewed = self.reviewed.clone();
+        let hidden = if self.hide_reviewed {
+            self.reviewed.len()
+        } else {
+            0
+        };
         v_flex()
             .flex_1()
             .min_h_0()
             .children(self.render_merge_banner(cx))
+            .when(hidden > 0, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{hidden} reviewed file{} hidden · h to show",
+                            if hidden == 1 { "" } else { "s" }
+                        )),
+                )
+            })
             .child(
                 div()
                     .id("changes")
@@ -896,13 +944,21 @@ impl Workspace {
                                 .p_4()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Working tree clean"),
+                                .child(if hidden > 0 {
+                                    "Everything is reviewed"
+                                } else {
+                                    "Working tree clean"
+                                }),
                         )
                     })
                     .child(
                         uniform_list("change-rows", rows.len(), move |range, _, cx| {
                             range
-                                .map(|ix| render_row(ix, &rows[ix], selected, focused, &owner, cx))
+                                .map(|ix| {
+                                    render_row(
+                                        ix, &rows[ix], selected, focused, &reviewed, &owner, cx,
+                                    )
+                                })
                                 .collect()
                         })
                         .size_full()
@@ -1020,6 +1076,7 @@ fn render_row(
     row: &Row,
     selected: Option<usize>,
     focused: bool,
+    reviewed: &std::collections::HashSet<String>,
     owner: &gpui_kit::WeakEntity<Workspace>,
     cx: &App,
 ) -> gpui_kit::AnyElement {
@@ -1075,6 +1132,7 @@ fn render_row(
                 .rsplit_once('/')
                 .unwrap_or(("", entry.path.as_str()));
             let is_selected = selected == Some(ix);
+            let is_reviewed = reviewed.contains(&entry.path);
             let select_owner = owner.clone();
             let toggle_owner = owner.clone();
             ListItem::new(("file", ix))
@@ -1101,7 +1159,14 @@ fn render_row(
                                         .ok();
                                 }),
                         )
-                        .child(div().flex_none().child(filename.to_owned()))
+                        .child(
+                            div()
+                                .flex_none()
+                                .when(is_reviewed, |this| {
+                                    this.text_color(cx.theme().muted_foreground).line_through()
+                                })
+                                .child(filename.to_owned()),
+                        )
                         .child(
                             div()
                                 .flex_1()
@@ -1209,6 +1274,11 @@ impl Render for Workspace {
                 cx.listener(|this, _: &FindReferences, window, cx| {
                     this.find_references(window, cx)
                 }),
+            )
+            .on_action(cx.listener(|this, _: &ToggleReviewed, _, cx| this.toggle_reviewed(cx)))
+            .on_action(cx.listener(|this, _: &MarkAllReviewed, _, cx| this.mark_all_reviewed(cx)))
+            .on_action(
+                cx.listener(|this, _: &ToggleHideReviewed, _, cx| this.toggle_hide_reviewed(cx)),
             )
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
