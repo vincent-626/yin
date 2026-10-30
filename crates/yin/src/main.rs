@@ -2,6 +2,8 @@ mod assets;
 mod changes;
 mod shell;
 mod state;
+#[cfg(test)]
+mod tests;
 mod watcher;
 mod workspace;
 

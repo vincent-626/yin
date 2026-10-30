@@ -101,7 +101,7 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - Plan, agent guide (`CLAUDE.md`), reference checkouts (`script/bootstrap-refs`).
 - Cargo workspace, gpui-kit pinned, dark-only window with title bar.
 
-### Phase 1 — Review loop · status: in progress
+### Phase 1 — Review loop · status: done
 - [x] `yin_git`: open repo, parse `git status --porcelain=v2 -z` (branch, ahead/behind,
   staged/unstaged/untracked/conflicted), per-file patches, stage/unstage/commit. Tests.
 - [x] Changes panel: grouped file list (Conflicts / Staged / Changes / Untracked),
@@ -112,9 +112,11 @@ Each bullet is roughly one commit. A phase ends with something usable.
   shown as notifications.
 - [x] Auto-refresh: FSEvents watcher on worktree and git dirs (gitignore-aware,
   debounced), plus refresh on window focus.
-- [ ] Discard per file and untracked delete, behind a confirm dialog.
-- [ ] Open a repo: `cmd-o` folder picker, remembered last repo, launch with no args.
-- [ ] Headless UI tests (`gpui-kit` test-support) for the stage → commit flow.
+- [x] Discard (`cmd-backspace`) behind a confirm dialog; untracked files go to
+  the Trash.
+- [x] Open a repo: `cmd-o` / File menu folder picker, remembered last repo,
+  launch order argument → cwd → last repo → welcome screen.
+- [x] Headless UI tests (`gpui-kit` test-support) for the stage → commit flow.
 
 ### Phase 2 — Git operations
 - Hunk and line staging (build a partial patch, `git apply --cached`).
@@ -163,5 +165,9 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - 2026-10-30 — git CLI for all git operations to start; `gix` only where measured.
 - 2026-10-30 — Dark only, Apple Silicon macOS only.
 - 2026-10-30 — Rust pinned to 1.98.1 (Zed's toolchain); gpui-pre needs it.
+- 2026-10-30 — Untracked files are discarded to the Trash (NSFileManager),
+  never deleted outright.
+- 2026-10-30 — Workaround for gpui-component Diff keeping a stale width after
+  the window grows (`schedule_relayout`); worth reporting upstream.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.

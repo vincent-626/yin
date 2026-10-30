@@ -155,7 +155,11 @@ impl Workspace {
             _watch_task: Task::ready(()),
             _relayout_task: Task::ready(()),
         };
-        this.watch(cx);
+        // The test scheduler is deterministic and rejects wakeups from the
+        // FSEvents thread; tests refresh after each operation anyway.
+        if !cfg!(test) {
+            this.watch(cx);
+        }
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.refresh(cx);
@@ -207,6 +211,16 @@ impl Workspace {
                 };
             }
         });
+    }
+
+    #[cfg(test)]
+    pub fn selected_path(&self) -> Option<String> {
+        self.selected_key().map(|key| key.path)
+    }
+
+    #[cfg(test)]
+    pub fn commit_message_text(&self, cx: &App) -> String {
+        self.commit_message.read(cx).value().to_string()
     }
 
     fn selected_key(&self) -> Option<FileKey> {

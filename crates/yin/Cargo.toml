@@ -14,4 +14,6 @@ notify = "8"
 trash = "5"
 
 [dev-dependencies]
+# Headless windows and simulated input for UI tests; only enabled for tests.
+gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile = "3"

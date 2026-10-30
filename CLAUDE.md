@@ -45,6 +45,21 @@ keystrokes), and capture with `screencapture -x -o -l <window id>`. Test
 against a throwaway repo in a scratch directory, never this one. Kill the app
 when done (`pkill -x yin`); a second instance steals keystrokes.
 
+## UI tests
+
+`crates/yin/src/tests.rs` opens the real `Workspace` in a headless window
+(gpui-kit `test-support`, dev-dependency only), presses keys and checks git.
+Prefer adding a test there over manual driving for anything keyboard-reachable.
+The FSEvents watcher is off under `cfg(test)`: the deterministic scheduler
+panics on wakeups from other threads.
+
+## Known GPUI / gpui-kit traps
+
+- The `Diff` component learns its width during paint and its notify then
+  doesn't schedule a frame. `Workspace::schedule_relayout` redraws twice
+  after resizes and new diffs; keep calling it if you add another Diff.
+- A plain `div()` root around flex children can mis-size them; use `v_flex()`.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins Rust to Zed's version; `gpui-pre` needs it. No
