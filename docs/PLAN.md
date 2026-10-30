@@ -163,7 +163,7 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Hover (gpui-component's popover).
 - [x] Find references (`shift-f12`), listed in the Search tab.
 
-### Phase 6 — Agent-era review and polish
+### Phase 6 — Agent-era review and polish · status: done
 - [x] "Since last review": `r` marks a file reviewed by content hash, `h` hides
   reviewed files; an agent's later edit brings the file back. Saved per repo.
 - [x] Worktree picker (`w`): every worktree with its branch and change count;
@@ -171,7 +171,18 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Session restore per repository (open tabs, active tab, sidebar tab and
   visibility, diff mode), saved on every way out. Panel sizes are not kept yet.
 - [x] Keymap file `~/.config/yin/keymap.json`; problems shown at launch.
-- Packaged `.app` bundle and `script/install`.
+- [x] `script/bundle` builds `yin.app`; `script/install` copies it to
+  `~/Applications` and adds a `yin [path]` command in `~/.local/bin`.
+
+## Next
+
+All planned phases are done. Candidates, roughly by value:
+- Remember sidebar width and window size with the session.
+- Side-by-side "all changes" review: every changed file in one scrolling diff.
+- Diagnostics from language servers (errors in the gutter and the file tree).
+- Pull with rebase for diverged branches; force-push with lease behind a confirm.
+- Command palette listing every action and its key.
+- An app icon.
 
 ## Risks
 

@@ -5,9 +5,12 @@ A native, dark-only code workspace for reviewing changes, running git, and readi
 See [docs/PLAN.md](docs/PLAN.md).
 
 ```bash
-script/bootstrap-refs   # optional: reference checkouts for agents
-cargo run -- /path/to/repo
+script/install          # builds yin.app into ~/Applications and a `yin` command
+yin ~/Code/some-repo    # or `yin` inside a repository
 ```
+
+For development: `cargo run -- /path/to/repo`, and optionally
+`script/bootstrap-refs` for the reference checkouts agents read.
 
 ## Keys
 

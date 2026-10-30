@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Build yin.app, copy it to ~/Applications, and add a `yin` command to
+# ~/.local/bin that opens a repository: `yin [path]`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+app=$(script/bundle | tail -1)
+mkdir -p ~/Applications ~/.local/bin
+rm -rf ~/Applications/yin.app
+cp -R "$app" ~/Applications/yin.app
+cat > ~/.local/bin/yin <<'SHIM'
+#!/usr/bin/env bash
+# Open a repository in yin (default: the current directory).
+target=$(cd "${1:-.}" && pwd)
+exec ~/Applications/yin.app/Contents/MacOS/yin "$target" >/dev/null 2>&1 &
+SHIM
+chmod +x ~/.local/bin/yin
+echo "Installed ~/Applications/yin.app and ~/.local/bin/yin"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) echo "Add ~/.local/bin to your PATH to use the yin command." ;;
+esac
