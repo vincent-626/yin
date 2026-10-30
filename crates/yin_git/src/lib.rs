@@ -416,6 +416,16 @@ impl Repository {
             .with_context(|| format!("couldn't read {path}"))
     }
 
+    /// Whether a merge is waiting for its conflicts to be resolved.
+    pub fn merge_in_progress(&self) -> Result<bool> {
+        let (git_dir, _) = self.git_dirs()?;
+        Ok(git_dir.join("MERGE_HEAD").exists())
+    }
+
+    pub fn abort_merge(&self) -> Result<()> {
+        self.git(["merge", "--abort"]).map(drop)
+    }
+
     pub fn has_head(&self) -> bool {
         self.git(["rev-parse", "--verify", "--quiet", "HEAD"])
             .is_ok()

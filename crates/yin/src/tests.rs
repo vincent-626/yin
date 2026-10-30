@@ -13,7 +13,7 @@ use yin_git::Repository;
 
 use crate::workspace::{self, Workspace, actions};
 use gpui_kit::Action as _;
-use gpui_kit::component::diff::{DiffLineRange, DiffSide};
+use gpui_kit::component::diff::{DiffConflictResolution, DiffLineRange, DiffSide};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -191,4 +191,61 @@ fn stages_then_unstages_selected_lines_from_the_diff(cx: &mut TestAppContext) {
         std::fs::read_to_string(path.join("f.txt")).unwrap(),
         changed
     );
+}
+
+#[gpui_kit::test]
+fn resolves_a_conflict_then_marks_it_resolved(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(path, &["config", "user.name", "Yin Test"]);
+    git(path, &["config", "user.email", "yin@example.com"]);
+    std::fs::write(path.join("f.txt"), "base\n").unwrap();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "base"]);
+    git(path, &["switch", "--quiet", "-c", "other"]);
+    std::fs::write(path.join("f.txt"), "theirs\n").unwrap();
+    git(path, &["commit", "--quiet", "-am", "theirs"]);
+    git(path, &["switch", "--quiet", "main"]);
+    std::fs::write(path.join("f.txt"), "ours\n").unwrap();
+    git(path, &["commit", "--quiet", "-am", "ours"]);
+    let merge = Command::new("git")
+        .args(["merge", "other"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(!merge.status.success());
+
+    let (window, workspace) = open(cx, Repository::open(path).unwrap());
+    cx.run_until_parked();
+    let press_space = |cx: &mut TestAppContext| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("space", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    // Unresolved: space refuses, and the file keeps its markers unstaged.
+    press_space(cx);
+    assert_eq!(
+        git(path, &["diff", "--name-only", "--diff-filter=U"]),
+        "f.txt\n"
+    );
+
+    // Accept the incoming side, as the conflict's button does, then mark resolved.
+    cx.update(|cx| {
+        let diff = workspace.read(cx).diff_state();
+        diff.update(cx, |diff, cx| {
+            diff.resolve_conflict("f.txt", 0, Some(DiffConflictResolution::Incoming), cx)
+        });
+    });
+    press_space(cx);
+    assert_eq!(git(path, &["diff", "--name-only", "--diff-filter=U"]), "");
+    assert_eq!(
+        std::fs::read_to_string(path.join("f.txt")).unwrap(),
+        "theirs\n"
+    );
+    assert_eq!(git(path, &["show", ":f.txt"]), "theirs\n");
 }

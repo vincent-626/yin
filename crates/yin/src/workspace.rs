@@ -30,6 +30,7 @@ use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
 mod branches;
+mod conflicts;
 mod history;
 mod remote;
 mod staging;
@@ -121,6 +122,7 @@ pub struct Workspace {
     repo: Repository,
     status: Status,
     stashes: Vec<yin_git::Stash>,
+    merging: bool,
     rows: Arc<Vec<Row>>,
     selected: Option<usize>,
     loaded: bool,
@@ -196,6 +198,7 @@ impl Workspace {
             repo,
             status: Status::default(),
             stashes: Vec::new(),
+            merging: false,
             rows: Arc::default(),
             selected: None,
             loaded: false,
@@ -329,7 +332,8 @@ impl Workspace {
             let result = cx
                 .background_spawn(async move {
                     let status = repo.status()?;
-                    anyhow::Ok((status, repo.stashes()?))
+                    let merging = repo.merge_in_progress()?;
+                    anyhow::Ok((status, repo.stashes()?, merging))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -337,7 +341,10 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok((status, stashes)) => this.install_status(status, stashes, cx),
+                    Ok((status, stashes, merging)) => {
+                        this.merging = merging;
+                        this.install_status(status, stashes, cx)
+                    }
                     Err(error) => this.error = Some(error.to_string().into()),
                 }
                 cx.notify();
@@ -392,10 +399,13 @@ impl Workspace {
         let stash = self.stash_for(&key.path);
         self._diff_task = cx.spawn(async move |this, cx| {
             let target = key.section.diff_target();
+            let key_section = key.section;
             let path = key.path.clone();
             let result = cx
                 .background_spawn(async move {
                     match (target, stash) {
+                        // A conflicted file is shown whole, markers included.
+                        _ if key_section == Section::Conflicts => repo.read_file(&path),
                         (Some(target), _) => repo.diff(&path, target),
                         (None, Some(stash)) => repo.stash_patch(&stash),
                         (None, None) => Ok(String::new()),
@@ -430,7 +440,12 @@ impl Workspace {
         if self.diff_key.as_ref() == Some(&key) && self.diff_patch == patch {
             return;
         }
-        let files = match DiffFile::parse(&patch) {
+        let parsed = if key.section == Section::Conflicts {
+            DiffFile::parse_conflicts(key.path.clone(), &patch).map(|file| vec![file])
+        } else {
+            DiffFile::parse(&patch)
+        };
+        let files = match parsed {
             Ok(files) => files,
             Err(error) => {
                 self.error = Some(format!("couldn't read diff of {}: {error}", key.path).into());
@@ -532,8 +547,10 @@ impl Workspace {
         let Some(key) = self.rows.get(ix).and_then(Row::key) else {
             return;
         };
-        if key.section == Section::Stashes {
-            return;
+        match key.section {
+            Section::Stashes => return,
+            Section::Conflicts => return self.mark_resolved(key, window, cx),
+            _ => {}
         }
         self.run(
             move |repo| {
@@ -752,6 +769,7 @@ impl Workspace {
         v_flex()
             .flex_1()
             .min_h_0()
+            .children(self.render_merge_banner(cx))
             .child(
                 div()
                     .id("changes")
@@ -831,8 +849,9 @@ impl Workspace {
     fn render_diff(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let empty = self.diff.read(cx).files().is_empty();
         let selection = self.diff.read(cx).selected_lines();
-        let selection_bar =
-            selection.and_then(|range| self.render_selection_bar(&range, window, cx));
+        let selection_bar = selection
+            .and_then(|range| self.render_selection_bar(&range, window, cx))
+            .or_else(|| self.render_conflict_bar(cx));
         v_flex()
             .size_full()
             .min_w_0()
@@ -914,23 +933,28 @@ fn render_row(
                         .flex_1()
                         .child(format!("{} · {count}", section.title())),
                 )
-                .when(section != Section::Stashes, |this| {
-                    this.child(
-                        Button::new(("toggle-section", ix))
-                            .ghost()
-                            .xsmall()
-                            .label(if section.is_staged() {
-                                "Unstage all"
-                            } else {
-                                "Stage all"
-                            })
-                            .on_click(move |_, window, cx| {
-                                owner
-                                    .update(cx, |this, cx| this.toggle_section(section, window, cx))
-                                    .ok();
-                            }),
-                    )
-                })
+                .when(
+                    !matches!(section, Section::Stashes | Section::Conflicts),
+                    |this| {
+                        this.child(
+                            Button::new(("toggle-section", ix))
+                                .ghost()
+                                .xsmall()
+                                .label(if section.is_staged() {
+                                    "Unstage all"
+                                } else {
+                                    "Stage all"
+                                })
+                                .on_click(move |_, window, cx| {
+                                    owner
+                                        .update(cx, |this, cx| {
+                                            this.toggle_section(section, window, cx)
+                                        })
+                                        .ok();
+                                }),
+                        )
+                    },
+                )
                 .into_any_element()
         }
         Row::Stash(stash) => {

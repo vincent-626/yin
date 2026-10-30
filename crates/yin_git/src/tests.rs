@@ -500,4 +500,8 @@ fn resolves_a_merge_conflict() {
         .resolve_conflict("f.txt", "ours and theirs\n")
         .unwrap();
     assert_eq!(fx.repo.status().unwrap().conflicted().count(), 0);
+    assert!(fx.repo.merge_in_progress().unwrap());
+    fx.repo.abort_merge().unwrap();
+    assert!(!fx.repo.merge_in_progress().unwrap());
+    assert_eq!(fx.repo.read_file("f.txt").unwrap(), "ours\n");
 }
