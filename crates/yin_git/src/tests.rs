@@ -657,3 +657,38 @@ fn rebase_conflicts_can_be_continued_or_aborted_and_merges_keep_their_message() 
     fx.repo.abort_rebase().unwrap();
     assert_eq!(fx.repo.in_progress().unwrap(), None);
 }
+
+#[test]
+fn blame_and_file_history() {
+    let fx = committed("one\ntwo\n");
+    fx.write("other.txt", "x\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("unrelated", false).unwrap();
+    fx.write("f.txt", "one\nTWO\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("shout two", false).unwrap();
+    fx.write("f.txt", "one\nTWO\nthree\n");
+
+    let blame = fx.repo.blame("f.txt").unwrap();
+    assert_eq!(blame.len(), 3);
+    assert_eq!(blame[0].summary, "initial");
+    assert_eq!(blame[0].author, "Yin Test");
+    assert_eq!(blame[1].summary, "shout two");
+    assert_eq!(blame[1].text, "TWO");
+    assert!(!blame[2].is_committed());
+
+    let history: Vec<String> = fx
+        .repo
+        .file_log("f.txt", 10)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.subject)
+        .collect();
+    assert_eq!(history, ["shout two", "initial"]);
+    let oid = fx.repo.file_log("f.txt", 1).unwrap()[0].oid.clone();
+    let patch = fx.repo.commit_file_patch(&oid, "f.txt").unwrap();
+    assert!(
+        patch.contains("+TWO") && !patch.contains("other.txt"),
+        "{patch}"
+    );
+}

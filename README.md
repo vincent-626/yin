@@ -52,6 +52,8 @@ For development: `cargo run -- /path/to/repo`, and optionally
 | | `ctrl-g` | Go to line (`line` or `line:column`) |
 | | `f12` / cmd-click | Go to definition |
 | | `shift-f12` | Find references |
+| | `cmd-alt-b` | Blame (click a commit to open it) |
+| | `cmd-alt-h` | History of this file |
 | | hover | Type and docs (needs the language server installed) |
 
 ## Custom keys

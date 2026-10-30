@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-pub use history::{BranchRef, Commit, Stash, Worktree};
+pub use history::{BlameLine, BranchRef, Commit, Stash, Worktree};
 pub use patch::{FilePatch, LinePosition, RowKind, Side};
 pub use status::{Branch, Change, FileStatus, Status, StatusEntry};
 
@@ -339,6 +339,42 @@ impl Repository {
             "--",
         ])?;
         history::parse_log(&output)
+    }
+
+    /// Commits that changed `path`, newest first, following renames.
+    pub fn file_log(&self, path: &str, limit: usize) -> Result<Vec<Commit>> {
+        if !self.has_head() {
+            return Ok(Vec::new());
+        }
+        let output = self.git([
+            "log",
+            "-z",
+            "--follow",
+            "--no-show-signature",
+            "--encoding=UTF-8",
+            history::LOG_FORMAT,
+            &format!("--max-count={limit}"),
+            "HEAD",
+            "--",
+            path,
+        ])?;
+        history::parse_log(&output)
+    }
+
+    /// The working file's lines, each with the commit that last changed it.
+    pub fn blame(&self, path: &str) -> Result<Vec<BlameLine>> {
+        let output = self.git(["blame", "--porcelain", "--", path])?;
+        Ok(history::parse_blame(&output))
+    }
+
+    /// What a commit changed in one file, following a rename.
+    pub fn commit_file_patch(&self, oid: &str, path: &str) -> Result<String> {
+        self.git(
+            ["show", "--format=", "--first-parent", "--no-show-signature"]
+                .iter()
+                .chain(DIFF_ARGS)
+                .chain(&[oid, "--", path]),
+        )
     }
 
     /// A commit's full message.

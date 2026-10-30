@@ -635,8 +635,12 @@ impl Workspace {
         let Some(file) = self.active_file.and_then(|ix| self.open_files.get(ix)) else {
             return;
         };
+        let blamed = self
+            .blame
+            .as_ref()
+            .is_some_and(|(path, _)| *path == file.path);
         match &file.content {
-            FileContent::Text { editor, .. } if !file.preview => {
+            FileContent::Text { editor, .. } if !file.preview && !blamed => {
                 editor.read(cx).focus_handle(cx).focus(window, cx)
             }
             _ => self.file_pane_focus.focus(window, cx),
@@ -753,9 +757,11 @@ impl Workspace {
         };
         let file = &self.open_files[active];
         let markdown = is_markdown(&file.path);
-        let content = match &file.content {
-            FileContent::Loading => div().into_any_element(),
-            FileContent::Unavailable(reason) => v_flex()
+        let blame = self.render_blame(&file.path, cx);
+        let content = match (&file.content, blame) {
+            (_, Some(blame)) => blame,
+            (FileContent::Loading, None) => div().into_any_element(),
+            (FileContent::Unavailable(reason), None) => v_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
@@ -763,16 +769,19 @@ impl Workspace {
                 .text_color(cx.theme().muted_foreground)
                 .child(reason.clone())
                 .into_any_element(),
-            FileContent::Text {
-                markdown: Some(markdown),
-                ..
-            } if file.preview => div()
+            (
+                FileContent::Text {
+                    markdown: Some(markdown),
+                    ..
+                },
+                None,
+            ) if file.preview => div()
                 .id("markdown-preview")
                 .size_full()
                 .overflow_hidden()
                 .child(TextView::new(markdown).size_full().scrollable(true).p_6())
                 .into_any_element(),
-            FileContent::Text { editor, .. } => Editor::new(editor)
+            (FileContent::Text { editor, .. }, None) => Editor::new(editor)
                 // Outside the repository: toolchain sources reached by go to definition.
                 .readonly(std::path::Path::new(&file.path).is_absolute())
                 .bordered(false)

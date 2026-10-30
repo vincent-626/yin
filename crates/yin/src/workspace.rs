@@ -29,6 +29,7 @@ use yin_git::{Change, Repository, Status};
 use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
+mod blame;
 mod branches;
 mod conflicts;
 mod files;
@@ -90,6 +91,8 @@ pub(crate) mod actions {
             SwitchWorktree,
             ToggleReviewAll,
             CommandPalette,
+            FileHistory,
+            ToggleBlame,
         ]
     );
 }
@@ -188,6 +191,8 @@ pub fn init(cx: &mut App) {
         ),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-p", CommandPalette, Some("Workspace")),
+        KeyBinding::new("cmd-alt-h", FileHistory, Some("Workspace")),
+        KeyBinding::new("cmd-alt-b", ToggleBlame, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
         // The editor binds cmd-shift-f to replace; keep it for project search,
         // as Zed does, and move replace to cmd-alt-f.
@@ -267,6 +272,12 @@ pub struct Workspace {
     history_head: Option<String>,
     _history_task: Task<()>,
     _commit_task: Task<()>,
+    /// The History tab shows only this file's commits.
+    history_path: Option<String>,
+    /// A commit to select once the history loads.
+    pending_commit: Option<String>,
+    /// Blame for one open file, when shown.
+    blame: Option<(String, Arc<Vec<yin_git::BlameLine>>)>,
     files: Arc<Vec<String>>,
     files_loaded: bool,
     file_tree: Entity<gpui_kit::component::tree::TreeState>,
@@ -388,6 +399,9 @@ impl Workspace {
             history_head: None,
             _history_task: Task::ready(()),
             _commit_task: Task::ready(()),
+            history_path: None,
+            pending_commit: None,
+            blame: None,
             files: Arc::default(),
             files_loaded: false,
             file_tree: Self::new_file_tree(cx),
@@ -1430,8 +1444,20 @@ impl Render for Workspace {
                 this.show_panel(Panel::Changes, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowHistory, window, cx| {
-                this.show_panel(Panel::History, window, cx)
+                this.set_history_path(None, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &FileHistory, window, cx| {
+                let path = this
+                    .active_file
+                    .and_then(|ix| this.open_files.get(ix))
+                    .map(|file| file.path.clone());
+                if path.is_some() {
+                    this.set_history_path(path, window, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &ToggleBlame, window, cx| this.toggle_blame(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &ShowFiles, window, cx| {
                 this.show_panel(Panel::Files, window, cx)
             }))

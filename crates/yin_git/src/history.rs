@@ -180,3 +180,65 @@ pub(crate) fn parse_worktrees(output: &str) -> Vec<Worktree> {
     worktrees.extend(current);
     worktrees
 }
+
+/// One line of `git blame`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlameLine {
+    /// All zeros for lines not committed yet.
+    pub oid: String,
+    pub author: String,
+    /// Author time, seconds since the epoch.
+    pub time: i64,
+    pub summary: String,
+    pub text: String,
+}
+
+impl BlameLine {
+    pub fn is_committed(&self) -> bool {
+        !self.oid.bytes().all(|byte| byte == b'0')
+    }
+}
+
+/// Parses `git blame --porcelain`: a header per line, commit details the
+/// first time each commit appears, then the line itself after a tab.
+pub(crate) fn parse_blame(output: &str) -> Vec<BlameLine> {
+    #[derive(Clone, Default)]
+    struct Details {
+        author: String,
+        time: i64,
+        summary: String,
+    }
+    let mut commits: std::collections::HashMap<String, Details> = Default::default();
+    let mut lines = Vec::new();
+    let mut current: Option<String> = None;
+    for line in output.lines() {
+        if let Some(text) = line.strip_prefix('\t') {
+            let Some(oid) = current.take() else { continue };
+            let details = commits.get(&oid).cloned().unwrap_or_default();
+            lines.push(BlameLine {
+                oid,
+                author: details.author,
+                time: details.time,
+                summary: details.summary,
+                text: text.to_owned(),
+            });
+            continue;
+        }
+        let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+        if key.len() == 40 && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            commits.entry(key.to_owned()).or_default();
+            current = Some(key.to_owned());
+            continue;
+        }
+        let Some(details) = current.as_ref().and_then(|oid| commits.get_mut(oid)) else {
+            continue;
+        };
+        match key {
+            "author" => details.author = value.to_owned(),
+            "author-time" => details.time = value.parse().unwrap_or(0),
+            "summary" => details.summary = value.to_owned(),
+            _ => {}
+        }
+    }
+    lines
+}

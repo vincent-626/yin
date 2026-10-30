@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
+    button::{Button, ButtonVariants as _},
     diff::{Diff, DiffFile},
     h_flex,
     list::ListItem,
@@ -35,15 +36,24 @@ impl Workspace {
     /// Reloads the commit list, keeping the selected commit when it remains.
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
+        let path = self.history_path.clone();
         self.history_head = self.status.branch.oid.clone();
         self._history_task = cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { repo.log(HISTORY_LIMIT) })
+                .background_spawn(async move {
+                    match path {
+                        Some(path) => repo.file_log(&path, HISTORY_LIMIT),
+                        None => repo.log(HISTORY_LIMIT),
+                    }
+                })
                 .await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(commits) => {
-                        let previous = this.selected_commit().map(|commit| commit.oid.clone());
+                        let previous = this
+                            .pending_commit
+                            .take()
+                            .or_else(|| this.selected_commit().map(|commit| commit.oid.clone()));
                         let ix = previous
                             .and_then(|oid| commits.iter().position(|c| c.oid == oid))
                             .or((!commits.is_empty()).then_some(0));
@@ -58,6 +68,31 @@ impl Workspace {
             })
             .ok();
         });
+    }
+
+    /// Shows only commits that changed `path`, or every commit with `None`.
+    pub(super) fn set_history_path(
+        &mut self,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_path != path {
+            self.history_path = path;
+            self.history_loaded = false;
+            self.commits = Arc::default();
+            self.commit_selected = None;
+        }
+        self.show_panel(super::Panel::History, window, cx);
+    }
+
+    /// Opens a commit in the History tab, such as one picked from blame.
+    pub(super) fn show_commit(&mut self, oid: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_commit = Some(oid);
+        self.history_path = None;
+        self.history_loaded = false;
+        self.commit_selected = None;
+        self.show_panel(super::Panel::History, window, cx);
     }
 
     fn selected_commit(&self) -> Option<&Commit> {
@@ -81,13 +116,17 @@ impl Workspace {
         }
         let oid = commit.oid.clone();
         let repo = self.repo.clone();
+        let path = self.history_path.clone();
         self._commit_task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn({
                     let oid = oid.clone();
                     async move {
                         let message = repo.commit_message(&oid)?;
-                        let patch = repo.commit_patch(&oid)?;
+                        let patch = match &path {
+                            Some(path) => repo.commit_file_patch(&oid, path)?,
+                            None => repo.commit_patch(&oid)?,
+                        };
                         let files = DiffFile::parse(&patch)
                             .map_err(|error| anyhow::anyhow!("couldn't read diff: {error}"))?;
                         anyhow::Ok((message, files))
@@ -132,7 +171,34 @@ impl Workspace {
         let selected = self.commit_selected;
         let focused = self.history_focus.is_focused(window);
         let owner = cx.entity().downgrade();
-        div()
+        let filter = self.history_path.clone().map(|path| {
+            h_flex()
+                .flex_none()
+                .px_3()
+                .py_1()
+                .gap_2()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(format!("History of {path}")),
+                )
+                .child(
+                    Button::new("all-commits")
+                        .ghost()
+                        .xsmall()
+                        .label("All commits")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_history_path(None, window, cx)
+                        })),
+                )
+        });
+        let list = div()
             .id("history")
             .relative()
             .flex_1()
@@ -163,7 +229,12 @@ impl Workspace {
                 .size_full()
                 .track_scroll(&self.history_scroll),
             )
-            .child(Scrollbar::vertical(&self.history_scroll))
+            .child(Scrollbar::vertical(&self.history_scroll));
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .children(filter)
+            .child(list)
             .into_any_element()
     }
 
