@@ -6,6 +6,7 @@ use gpui_kit::component::{
     TitleBar, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     checkbox::Checkbox,
+    command::CommandState,
     diff::{Diff, DiffFile, DiffMode, DiffState},
     h_flex,
     input::{InputEvent, Textarea, TextareaState},
@@ -27,6 +28,7 @@ use yin_git::{Change, Repository, Status};
 use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
+mod branches;
 mod remote;
 
 use remote::RemoteOp;
@@ -51,6 +53,7 @@ mod actions {
             Fetch,
             Pull,
             Push,
+            SwitchBranch,
         ]
     );
 }
@@ -80,6 +83,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("f", Fetch, Some(CHANGES_CONTEXT)),
         KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("b", SwitchBranch, Some(CHANGES_CONTEXT)),
     ]);
 }
 
@@ -110,6 +114,8 @@ pub struct Workspace {
     _watcher: Option<RepoWatcher>,
     _watch_task: Task<()>,
     remote_op: Option<RemoteOp>,
+    branches: Vec<yin_git::BranchRef>,
+    branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
     _relayout_task: Task<()>,
 }
@@ -166,6 +172,8 @@ impl Workspace {
             _watcher: None,
             _watch_task: Task::ready(()),
             remote_op: None,
+            branches: Vec::new(),
+            branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
             _relayout_task: Task::ready(()),
         };
@@ -553,11 +561,16 @@ impl Workspace {
                 .text_sm()
                 .child(div().font_medium().child(self.repo.name()))
                 .child(
-                    h_flex()
-                        .gap_1()
+                    Button::new("branch")
+                        .ghost()
+                        .xsmall()
                         .text_color(muted)
-                        .child(Icon::empty().path("icons/git-branch.svg").xsmall())
-                        .child(head),
+                        .icon(Icon::empty().path("icons/git-branch.svg"))
+                        .label(head)
+                        .tooltip_with_action("Switch branch", &SwitchBranch, Some(CHANGES_CONTEXT))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_branch_picker(window, cx)),
+                        ),
                 )
                 .child(div().flex_1())
                 .child(self.render_sync_buttons(cx))
@@ -867,6 +880,11 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Commit, window, cx| this.commit(window, cx)))
             .on_action(
                 cx.listener(|this, _: &Discard, window, cx| this.discard_selected(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchBranch, window, cx| {
+                    this.open_branch_picker(window, cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &Fetch, window, cx| {
                 this.run_remote(RemoteOp::Fetch, window, cx)
