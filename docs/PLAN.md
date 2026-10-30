@@ -118,14 +118,17 @@ Each bullet is roughly one commit. A phase ends with something usable.
   launch order argument → cwd → last repo → welcome screen.
 - [x] Headless UI tests (`gpui-kit` test-support) for the stage → commit flow.
 
-### Phase 2 — Git operations
-- Hunk and line staging (build a partial patch, `git apply --cached`).
-- Branches: picker with fuzzy search, switch, create from HEAD.
-- Remotes: fetch, pull (ff-only by default), push (set upstream on first push);
-  progress and errors in the status bar; never block the UI.
-- Log: commit list for the current branch, commit detail with its diff.
-- Stash: push, pop, list.
-- Conflicts: list conflicted files, view with markers, mark resolved.
+### Phase 2 — Git operations · status: done
+- [x] Hunk and line staging (partial patch, `git apply --cached [--reverse]`):
+  select lines in the diff, `space` for lines, `s` for the hunk.
+- [x] Branches: fuzzy picker (`b`, or click the branch name), switch, create from
+  HEAD, check out remote branches as tracking branches.
+- [x] Remotes: fetch (`f`), pull fast-forward only (`p`), push (`shift-p`, sets the
+  upstream on first push); title-bar buttons with counts; never blocks the UI.
+- [x] History tab (`cmd-2`): commit list with refs, commit message and full diff.
+- [x] Stash: push (`s`), pop (`shift-s` or row button), drop, view as a diff.
+- [x] Conflicts: working file with Accept current / incoming / both, Mark resolved,
+  merge banner with Abort.
 
 ### Phase 3 — Navigate and read
 - `yin_fs`: worktree scan honoring `.gitignore`, watcher, incremental updates.
@@ -169,5 +172,8 @@ Each bullet is roughly one commit. A phase ends with something usable.
   never deleted outright.
 - 2026-10-30 — Workaround for gpui-component Diff keeping a stale width after
   the window grows (`schedule_relayout`); worth reporting upstream.
+- 2026-10-30 — Line staging places a replacement where its selected deletion
+  was; unselected deletions after it move behind the additions (git-gui's rule).
+- 2026-10-30 — Pull is fast-forward only; diverged branches are an error for now.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.
