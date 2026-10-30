@@ -14,13 +14,17 @@ cargo run -- /path/to/repo
 | Where | Key | Does |
 |---|---|---|
 | Anywhere | `cmd-o` | Open a repository |
-| | `cmd-1` / `cmd-2` | Changes / History |
+| | `cmd-1` / `cmd-2` / `cmd-3` | Changes / History / Files |
+| | `cmd-p` | Go to file |
+| | `cmd-shift-f` | Search the project |
+| | `cmd-w` | Close file tab |
+| | `cmd-shift-v` | Markdown preview / source |
 | | `cmd-r` | Refresh |
 | | `cmd-b` | Toggle sidebar |
 | | `cmd-shift-d` | Unified / split diff |
 | | `cmd-enter` | Commit staged changes |
 | | `cmd-alt-s` / `cmd-alt-u` | Stage all / unstage all |
-| | `[` / `]` | Previous / next file or commit |
+| | `[` / `]` | Previous / next file, commit, tab or result |
 | | `escape` | Back to the sidebar |
 | Changes list | `j` / `k` | Move |
 | | `space` | Stage / unstage file; mark a conflict resolved |
@@ -33,3 +37,6 @@ cargo run -- /path/to/repo
 | Diff | `shift-up` / `shift-down` | Select lines |
 | | `space` / `s` | Stage (or unstage) selected lines / their hunk |
 | History list | `j` / `k`, `enter` | Move, read the diff |
+| File tree | arrows, `enter` | Move, open/close folders, open file |
+| Search results | `j` / `k`, `enter` | Move, open at the line |
+| File view | `cmd-f` | Find in file |

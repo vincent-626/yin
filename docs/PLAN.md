@@ -45,11 +45,11 @@ column as phases land; record decisions in the log at the bottom.
 
 ```
 crates/
-  yin/          app binary: window, workspace layout, panels, actions, keymap
-  yin_git/      repository model: status, diff, stage, commit, branches, remotes
+  yin/          app binary: window, workspace (one module per feature), keymap
+  yin_git/      repository model: status, diff, partial patches, branches,
+                remotes, log, stash, conflicts
+  yin_fs/       worktree scan, folder tree, fuzzy matching, project search
   (later)
-  yin_fs/       worktree scan (ignore crate), file watcher (notify), fuzzy index
-  yin_search/   project search (grep-searcher / ignore)
   yin_lsp/      minimal LSP client for go-to-definition and hover
 ```
 
@@ -130,13 +130,16 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Conflicts: working file with Accept current / incoming / both, Mark resolved,
   merge banner with Abort.
 
-### Phase 3 — Navigate and read
-- `yin_fs`: worktree scan honoring `.gitignore`, watcher, incremental updates.
-- File tree panel with git status decorations.
-- Tabs in the center pane; file view (read-only, highlighted, line numbers).
-- Fuzzy file finder (`cmd-p`) with `nucleo`.
-- Markdown preview for `.md` files, with a source/preview toggle.
-- Project search (`cmd-shift-f`) with results list → file at line.
+### Phase 3 — Navigate and read · status: done
+- [x] `yin_fs`: gitignore-aware parallel scan, folder tree, rescanned on refresh
+  (38 ms for Zed's 4.4k files).
+- [x] Files tab (`cmd-3`): tree with git status colours on files and folders.
+- [x] Tabs in the main pane; read-only, highlighted, line-numbered file view with
+  in-file search; open files reload when changed on disk.
+- [x] Fuzzy file finder (`cmd-p`) with nucleo; empty query lists open and changed files.
+- [x] Markdown rendered by default, with a Source / Preview toggle (`cmd-shift-v`).
+- [x] Project search (`cmd-shift-f`): smart-case literal or regex, grouped
+  results, opens at the line.
 
 ### Phase 4 — Light editing
 - Switch file view to the gpui-component code editor in edit mode.
