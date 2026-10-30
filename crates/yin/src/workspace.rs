@@ -37,6 +37,9 @@ mod history;
 mod lsp;
 mod remote;
 mod reviewing;
+mod worktrees;
+
+pub use worktrees::OpenRepository;
 mod search;
 mod staging;
 mod stash;
@@ -82,6 +85,7 @@ pub(crate) mod actions {
             ToggleReviewed,
             MarkAllReviewed,
             ToggleHideReviewed,
+            SwitchWorktree,
         ]
     );
 }
@@ -147,6 +151,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("r", ToggleReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-r", MarkAllReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("h", ToggleHideReviewed, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("w", SwitchWorktree, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("cmd-alt-w", SwitchWorktree, Some("Workspace")),
         KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
@@ -246,6 +252,7 @@ pub struct Workspace {
     servers: lsp::Servers,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
+    worktree_picker: Entity<CommandState>,
     _remote_task: Task<()>,
     _relayout_task: Task<()>,
 }
@@ -344,6 +351,7 @@ impl Workspace {
             }),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
+            worktree_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
             _relayout_task: Task::ready(()),
         };
@@ -1276,6 +1284,9 @@ impl Render for Workspace {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleReviewed, _, cx| this.toggle_reviewed(cx)))
+            .on_action(cx.listener(|this, _: &SwitchWorktree, window, cx| {
+                this.open_worktree_picker(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &MarkAllReviewed, _, cx| this.mark_all_reviewed(cx)))
             .on_action(
                 cx.listener(|this, _: &ToggleHideReviewed, _, cx| this.toggle_hide_reviewed(cx)),

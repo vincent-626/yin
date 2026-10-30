@@ -15,7 +15,7 @@ use gpui_kit::{
 use yin_git::Repository;
 
 use crate::state;
-use crate::workspace::Workspace;
+use crate::workspace::{OpenRepository, Workspace};
 
 mod actions {
     gpui_kit::actions!(yin, [Open, Quit]);
@@ -85,8 +85,38 @@ impl Shell {
 
     fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
         state::save_last_repo(repo.workdir());
-        self.workspace = Some(cx.new(|cx| Workspace::new(repo, window, cx)));
+        let workspace = cx.new(|cx| Workspace::new(repo, window, cx));
+        cx.subscribe_in(
+            &workspace,
+            window,
+            |this, _, event: &OpenRepository, window, cx| {
+                this.switch_to(event.0.clone(), window, cx)
+            },
+        )
+        .detach();
+        self.workspace = Some(workspace);
         cx.notify();
+    }
+
+    /// Opens `path` in this window, asking first about unsaved edits.
+    fn switch_to(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let repo = match Repository::open(&path) {
+            Ok(repo) => repo,
+            Err(error) => {
+                return window.push_notification(Notification::error(error.to_string()), cx);
+            }
+        };
+        let unsaved = self.unsaved_files(cx);
+        if unsaved.is_empty() {
+            self.open_repo(repo, window, cx);
+        } else {
+            let shell = cx.entity().downgrade();
+            confirm_discard(unsaved, window, cx, move |window, cx| {
+                shell
+                    .update(cx, |this, cx| this.open_repo(repo.clone(), window, cx))
+                    .ok();
+            });
+        }
     }
 
     fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -103,26 +133,8 @@ impl Shell {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let result = cx
-                .background_spawn(async move { Repository::open(&path) })
-                .await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(repo) => {
-                    let unsaved = this.unsaved_files(cx);
-                    if unsaved.is_empty() {
-                        this.open_repo(repo, window, cx);
-                    } else {
-                        let shell = cx.entity().downgrade();
-                        confirm_discard(unsaved, window, cx, move |window, cx| {
-                            shell
-                                .update(cx, |this, cx| this.open_repo(repo.clone(), window, cx))
-                                .ok();
-                        });
-                    }
-                }
-                Err(error) => window.push_notification(Notification::error(error.to_string()), cx),
-            })
-            .ok();
+            this.update_in(cx, |this, window, cx| this.switch_to(path, window, cx))
+                .ok();
         })
         .detach();
     }

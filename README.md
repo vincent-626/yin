@@ -36,6 +36,7 @@ cargo run -- /path/to/repo
 | | `s` / `shift-s` | Stash all / pop stash |
 | | `r` / `shift-r` | Mark file / everything reviewed (unmarked again when it changes) |
 | | `h` | Hide or show reviewed files |
+| | `w` (or `cmd-alt-w`) | Switch worktree |
 | Diff | `shift-up` / `shift-down` | Select lines |
 | | `space` / `s` | Stage (or unstage) selected lines / their hunk |
 | History list | `j` / `k`, `enter` | Move, read the diff |

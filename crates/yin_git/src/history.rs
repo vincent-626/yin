@@ -128,3 +128,55 @@ pub(crate) fn parse_stashes(output: &str) -> Vec<Stash> {
         })
         .collect()
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: std::path::PathBuf,
+    /// The checked-out branch; `None` when detached or bare.
+    pub branch: Option<String>,
+    pub oid: Option<String>,
+    pub is_bare: bool,
+}
+
+/// Parses `git worktree list --porcelain -z`.
+pub(crate) fn parse_worktrees(output: &str) -> Vec<Worktree> {
+    let mut worktrees = Vec::new();
+    let mut current: Option<Worktree> = None;
+    for field in output.split('\0') {
+        if field.is_empty() {
+            // A blank record ends a worktree.
+            worktrees.extend(current.take());
+            continue;
+        }
+        let (key, value) = field.split_once(' ').unwrap_or((field, ""));
+        match key {
+            "worktree" => {
+                worktrees.extend(current.take());
+                current = Some(Worktree {
+                    path: value.into(),
+                    branch: None,
+                    oid: None,
+                    is_bare: false,
+                });
+            }
+            "HEAD" => {
+                if let Some(worktree) = &mut current {
+                    worktree.oid = Some(value.to_owned());
+                }
+            }
+            "branch" => {
+                if let Some(worktree) = &mut current {
+                    worktree.branch = Some(value.trim_start_matches("refs/heads/").to_owned());
+                }
+            }
+            "bare" => {
+                if let Some(worktree) = &mut current {
+                    worktree.is_bare = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    worktrees.extend(current);
+    worktrees
+}

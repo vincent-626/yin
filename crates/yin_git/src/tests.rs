@@ -505,3 +505,28 @@ fn resolves_a_merge_conflict() {
     assert!(!fx.repo.merge_in_progress().unwrap());
     assert_eq!(fx.repo.read_file("f.txt").unwrap(), "ours\n");
 }
+
+#[test]
+fn lists_worktrees() {
+    let fx = committed("a\n");
+    let linked = tempfile::tempdir().unwrap();
+    let path = linked.path().join("feature wt");
+    fx.repo
+        .git([
+            "worktree".as_ref(),
+            "add".as_ref(),
+            "-b".as_ref(),
+            "feature".as_ref(),
+            path.as_os_str(),
+        ])
+        .unwrap();
+    let worktrees = fx.repo.worktrees().unwrap();
+    assert_eq!(worktrees.len(), 2);
+    assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+    assert_eq!(worktrees[1].branch.as_deref(), Some("feature"));
+    assert_eq!(
+        worktrees[1].path.canonicalize().unwrap(),
+        path.canonicalize().unwrap()
+    );
+    assert!(worktrees.iter().all(|w| w.oid.is_some() && !w.is_bare));
+}

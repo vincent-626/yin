@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-pub use history::{BranchRef, Commit, Stash};
+pub use history::{BranchRef, Commit, Stash, Worktree};
 pub use patch::{FilePatch, LinePosition, RowKind, Side};
 pub use status::{Branch, Change, FileStatus, Status, StatusEntry};
 
@@ -424,6 +424,16 @@ impl Repository {
 
     pub fn abort_merge(&self) -> Result<()> {
         self.git(["merge", "--abort"]).map(drop)
+    }
+
+    /// Every worktree of this repository, the main one first.
+    pub fn worktrees(&self) -> Result<Vec<Worktree>> {
+        Ok(history::parse_worktrees(&self.git([
+            "worktree",
+            "list",
+            "--porcelain",
+            "-z",
+        ])?))
     }
 
     pub fn has_head(&self) -> bool {
