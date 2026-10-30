@@ -102,16 +102,19 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - Cargo workspace, gpui-kit pinned, dark-only window with title bar.
 
 ### Phase 1 — Review loop · status: in progress
-- `yin_git`: open repo, parse `git status --porcelain=v2 -z` (branch, ahead/behind,
-  staged/unstaged/untracked/conflicted), per-file and full patches. Tests.
-- Changes panel: grouped file list (Staged / Changes / Untracked), selection,
-  keyboard navigation.
-- Diff view: gpui-component `Diff` fed from `git diff`, language from extension,
-  untracked files shown as additions, unified/split toggle.
-- Stage / unstage / discard per file (with confirm for discard).
-- Commit box: message input, commit, amend toggle, `cmd-enter`.
-- Auto-refresh: FSEvents watcher on worktree and `.git`, debounced.
-- Open a repo: CLI argument, `cmd-o` folder picker, remembered last repo.
+- [x] `yin_git`: open repo, parse `git status --porcelain=v2 -z` (branch, ahead/behind,
+  staged/unstaged/untracked/conflicted), per-file patches, stage/unstage/commit. Tests.
+- [x] Changes panel: grouped file list (Conflicts / Staged / Changes / Untracked),
+  checkboxes, keyboard navigation (`j`/`k`, `space`, `enter`, `[`/`]`).
+- [x] Diff view: gpui-component `Diff` fed from `git diff`, language from extension,
+  untracked files shown as additions, unified/split toggle (`cmd-shift-d`).
+- [x] Commit box: message input, commit, amend toggle, `cmd-enter`; hook failures
+  shown as notifications.
+- [x] Auto-refresh: FSEvents watcher on worktree and git dirs (gitignore-aware,
+  debounced), plus refresh on window focus.
+- [ ] Discard per file and untracked delete, behind a confirm dialog.
+- [ ] Open a repo: `cmd-o` folder picker, remembered last repo, launch with no args.
+- [ ] Headless UI tests (`gpui-kit` test-support) for the stage → commit flow.
 
 ### Phase 2 — Git operations
 - Hunk and line staging (build a partial patch, `git apply --cached`).
@@ -159,3 +162,6 @@ Each bullet is roughly one commit. A phase ends with something usable.
   stable published snapshot, Apache-2.0, includes the Diff component.
 - 2026-10-30 — git CLI for all git operations to start; `gix` only where measured.
 - 2026-10-30 — Dark only, Apple Silicon macOS only.
+- 2026-10-30 — Rust pinned to 1.98.1 (Zed's toolchain); gpui-pre needs it.
+- 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
+  (System Events keystrokes) and `screencapture -l`.

@@ -8161,7 +8161,11 @@ name = "yin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "gpui-kit",
+ "ignore",
+ "notify",
+ "tempfile",
  "yin_git",
 ]
 

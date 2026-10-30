@@ -8,3 +8,9 @@ publish.workspace = true
 anyhow.workspace = true
 gpui-kit.workspace = true
 yin_git.workspace = true
+async-channel = "2"
+ignore = "0.4"
+notify = "8"
+
+[dev-dependencies]
+tempfile = "3"

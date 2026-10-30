@@ -1,5 +1,6 @@
 mod assets;
 mod changes;
+mod watcher;
 mod workspace;
 
 use std::path::PathBuf;

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
@@ -24,6 +25,7 @@ use gpui_kit::{
 use yin_git::{Change, Repository, Status};
 
 use crate::changes::{self, FileKey, Row, Section};
+use crate::watcher::{self, RepoWatcher};
 
 mod actions {
     gpui_kit::actions!(
@@ -95,6 +97,8 @@ pub struct Workspace {
     _status_task: Task<()>,
     _diff_task: Task<()>,
     _operation_task: Task<()>,
+    _watcher: Option<RepoWatcher>,
+    _watch_task: Task<()>,
 }
 
 impl Workspace {
@@ -144,9 +148,42 @@ impl Workspace {
             _status_task: Task::ready(()),
             _diff_task: Task::ready(()),
             _operation_task: Task::ready(()),
+            _watcher: None,
+            _watch_task: Task::ready(()),
         };
+        this.watch(cx);
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.refresh(cx);
+            }
+        })
+        .detach();
         this.refresh(cx);
         this
+    }
+
+    /// Refreshes after filesystem changes, batching bursts such as a build or
+    /// an agent rewriting many files.
+    fn watch(&mut self, cx: &mut Context<Self>) {
+        let (watcher, events) = match watcher::watch(&self.repo) {
+            Ok(watch) => watch,
+            Err(error) => {
+                self.error = Some(format!("not watching for changes: {error}").into());
+                return;
+            }
+        };
+        self._watcher = Some(watcher);
+        self._watch_task = cx.spawn(async move |this, cx| {
+            while events.recv().await.is_ok() {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                while events.try_recv().is_ok() {}
+                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
+                    break;
+                }
+            }
+        });
     }
 
     fn selected_key(&self) -> Option<FileKey> {

@@ -165,3 +165,29 @@ fn deletions_stage_and_hook_failures_surface() {
     let error = fx.repo.commit("delete", false).unwrap_err();
     assert!(error.to_string().contains("lint failed"), "{error}");
 }
+
+#[test]
+fn git_dirs_of_main_and_linked_worktree() {
+    let fx = Fixture::new();
+    fx.write("a.txt", "one\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("initial", false).unwrap();
+    let (git_dir, common_dir) = fx.repo.git_dirs().unwrap();
+    assert_eq!(git_dir, common_dir);
+    assert!(git_dir.ends_with(".git"));
+
+    let linked = tempfile::tempdir().unwrap();
+    let linked_path = linked.path().join("wt");
+    fx.repo
+        .git([
+            "worktree".as_ref(),
+            "add".as_ref(),
+            "--quiet".as_ref(),
+            linked_path.as_os_str(),
+        ])
+        .unwrap();
+    let worktree = Repository::open(&linked_path).unwrap();
+    let (wt_git_dir, wt_common_dir) = worktree.git_dirs().unwrap();
+    assert_ne!(wt_git_dir, wt_common_dir);
+    assert_eq!(wt_common_dir, common_dir.canonicalize().unwrap());
+}

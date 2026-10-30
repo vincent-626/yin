@@ -239,6 +239,20 @@ impl Repository {
             .to_owned())
     }
 
+    /// This worktree's git dir and the common dir shared by all worktrees.
+    /// They differ for linked worktrees, and both can live outside `workdir`.
+    pub fn git_dirs(&self) -> Result<(PathBuf, PathBuf)> {
+        let output = self.git(["rev-parse", "--absolute-git-dir", "--git-common-dir"])?;
+        let mut lines = output.lines();
+        let (Some(git_dir), Some(common_dir)) = (lines.next(), lines.next()) else {
+            bail!("unexpected rev-parse output: {output}");
+        };
+        let git_dir = PathBuf::from(git_dir);
+        // `--git-common-dir` is relative to the working directory when inside it.
+        let common_dir = self.workdir.join(common_dir);
+        Ok((git_dir, common_dir.canonicalize().unwrap_or(common_dir)))
+    }
+
     pub fn has_head(&self) -> bool {
         self.git(["rev-parse", "--verify", "--quiet", "HEAD"])
             .is_ok()
