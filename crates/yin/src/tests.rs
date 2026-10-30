@@ -249,3 +249,21 @@ fn resolves_a_conflict_then_marks_it_resolved(cx: &mut TestAppContext) {
     );
     assert_eq!(git(path, &["show", ":f.txt"]), "theirs\n");
 }
+
+#[gpui_kit::test]
+fn commit_message_accepts_brackets(cx: &mut TestAppContext) {
+    let dir = fixture();
+    let (window, workspace) = open(cx, Repository::open(dir.path()).unwrap());
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("c", cx);
+        window.input("[ui] ", cx);
+        window.press("[", cx);
+        window.press("]", cx);
+    })
+    .unwrap();
+    cx.update(|cx| {
+        assert_eq!(workspace.read(cx).commit_message_text(cx), "[ui] []");
+    });
+}
