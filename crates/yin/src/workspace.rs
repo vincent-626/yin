@@ -32,6 +32,7 @@ use crate::watcher::{self, RepoWatcher};
 mod branches;
 mod conflicts;
 mod files;
+mod finder;
 mod history;
 mod remote;
 mod staging;
@@ -70,6 +71,7 @@ pub(crate) mod actions {
             CloseFile,
             TogglePreview,
             OpenSelected,
+            FindFile,
         ]
     );
 }
@@ -128,6 +130,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-3", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
+        KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-v", TogglePreview, Some("Workspace")),
         KeyBinding::new("enter", OpenSelected, Some(FILES_CONTEXT)),
         KeyBinding::new("down", SelectNext, Some(HISTORY_CONTEXT)),
@@ -190,6 +193,8 @@ pub struct Workspace {
     open_files: Vec<files::OpenFile>,
     active_file: Option<usize>,
     _files_task: Task<()>,
+    finder: Entity<CommandState>,
+    finder_results: Vec<String>,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -271,6 +276,8 @@ impl Workspace {
             open_files: Vec::new(),
             active_file: None,
             _files_task: Task::ready(()),
+            finder: cx.new(|cx| CommandState::new(window, cx)),
+            finder_results: Vec::new(),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
@@ -1140,6 +1147,7 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
+            .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {
                 this.open_selected_tree_item(window, cx)
             }))
