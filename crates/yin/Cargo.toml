@@ -9,6 +9,7 @@ anyhow.workspace = true
 gpui-kit.workspace = true
 yin_fs.workspace = true
 yin_git.workspace = true
+yin_lsp.workspace = true
 async-channel = "2"
 ignore = "0.4"
 notify = "8"

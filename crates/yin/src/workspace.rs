@@ -34,6 +34,7 @@ mod conflicts;
 mod files;
 mod finder;
 mod history;
+mod lsp;
 mod remote;
 mod search;
 mod staging;
@@ -76,6 +77,7 @@ pub(crate) mod actions {
             ProjectSearch,
             SaveFile,
             GoToLine,
+            FindReferences,
         ]
     );
 }
@@ -147,6 +149,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
         KeyBinding::new("cmd-s", SaveFile, Some("Workspace")),
         KeyBinding::new("ctrl-g", GoToLine, Some("Workspace")),
+        KeyBinding::new("shift-f12", FindReferences, Some("Workspace")),
+        KeyBinding::new(
+            "f12",
+            gpui_kit::component::input::GoToDefinition,
+            Some("Input"),
+        ),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
         KeyBinding::new("down", SelectNext, Some(SEARCH_CONTEXT)),
@@ -224,6 +232,7 @@ pub struct Workspace {
     search_scroll: UniformListScrollHandle,
     _search_task: Task<()>,
     goto_input: Entity<gpui_kit::component::input::InputState>,
+    servers: lsp::Servers,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -312,6 +321,7 @@ impl Workspace {
             search_focus: cx.focus_handle().tab_stop(true),
             search_scroll: UniformListScrollHandle::new(),
             _search_task: Task::ready(()),
+            servers: Default::default(),
             goto_input: cx.new(|cx| {
                 gpui_kit::component::input::InputState::new(window, cx)
                     .placeholder("Line, or line:column")
@@ -1194,6 +1204,11 @@ impl Render for Workspace {
             )
             .on_action(
                 cx.listener(|this, _: &GoToLine, window, cx| this.prompt_go_to_line(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &FindReferences, window, cx| {
+                    this.find_references(window, cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))

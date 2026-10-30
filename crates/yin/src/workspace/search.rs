@@ -43,6 +43,8 @@ pub(super) struct SearchState {
     pub(super) options: SearchOptions,
     /// The query the results belong to.
     pub(super) query: String,
+    /// Shown instead of the result count, for results that aren't a search.
+    pub(super) title: Option<String>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -187,6 +189,34 @@ impl Workspace {
         }
     }
 
+    /// Lists find-references results in the Search tab.
+    pub(super) fn show_references(
+        &mut self,
+        symbol: String,
+        matches: Vec<SearchMatch>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.search.cancel.store(true, Ordering::Relaxed);
+        let title = match matches.len() {
+            0 => format!("No references to {symbol}"),
+            1 => format!("1 reference to {symbol}"),
+            n => format!("{n} references to {symbol}"),
+        };
+        self.search = SearchState {
+            rows: Arc::new(rows(&matches)),
+            matches: Arc::new(matches),
+            title: Some(title),
+            options: self.search.options,
+            ..Default::default()
+        };
+        self.panel = super::Panel::Search;
+        self.sidebar_visible = true;
+        self.search_focus.focus(window, cx);
+        self.step_search(1, cx);
+        cx.notify();
+    }
+
     pub(super) fn open_search_result(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(SearchRow::Match(ix)) = self
             .search
@@ -207,6 +237,8 @@ impl Workspace {
             "Searching…".to_owned()
         } else if let Some(error) = &search.error {
             error.clone()
+        } else if let Some(title) = &search.title {
+            title.clone()
         } else if search.query.is_empty() {
             String::new()
         } else {

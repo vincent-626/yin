@@ -8744,6 +8744,7 @@ dependencies = [
  "trash",
  "yin_fs",
  "yin_git",
+ "yin_lsp",
 ]
 
 [[package]]

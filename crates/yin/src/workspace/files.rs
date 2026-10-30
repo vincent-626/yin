@@ -39,6 +39,16 @@ pub(super) struct OpenFile {
     changed_on_disk: bool,
 }
 
+impl OpenFile {
+    /// The path and editor, once the file has loaded as text.
+    pub(super) fn editor(&self) -> Option<(&str, &Entity<EditorState>)> {
+        match &self.content {
+            FileContent::Text { editor, .. } => Some((&self.path, editor)),
+            _ => None,
+        }
+    }
+}
+
 enum FileContent {
     Loading,
     Text {
@@ -58,7 +68,7 @@ fn is_markdown(path: &str) -> bool {
 }
 
 /// The highlighter language for a path, by file name or extension.
-fn language_for(path: &str) -> &'static str {
+pub(super) fn language_for(path: &str) -> &'static str {
     let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
     if matches!(name.as_str(), "makefile" | "gnumakefile") {
         return "make";
@@ -318,6 +328,7 @@ impl Workspace {
                 return;
             }
         };
+        let mut created = None;
         let file = &mut self.open_files[ix];
         match &mut file.content {
             FileContent::Text {
@@ -351,9 +362,11 @@ impl Workspace {
                 });
                 let markdown = is_markdown(&path)
                     .then(|| cx.new(|cx| TextViewState::markdown(&text, cx).selectable(true)));
+                created = Some(editor.clone());
+                let edited_path = path.clone();
                 let edits = cx.subscribe(&editor, move |this, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
-                        this.file_edited(&path, cx);
+                        this.file_edited(&edited_path, cx);
                     }
                 });
                 *content = FileContent::Text {
@@ -363,6 +376,9 @@ impl Workspace {
                     _edits: edits,
                 };
             }
+        }
+        if let Some(editor) = created {
+            self.attach_language_server(&path, language_for(&path), &editor, window, cx);
         }
     }
 
@@ -391,6 +407,7 @@ impl Workspace {
             if let Some(markdown) = markdown {
                 markdown.update(cx, |markdown, cx| markdown.set_text(&value, cx));
             }
+            self.sync_edited_file(path, &value);
             cx.notify();
         }
     }
@@ -578,6 +595,7 @@ impl Workspace {
         if ix >= self.open_files.len() {
             return;
         }
+        self.close_in_language_server(&self.open_files[ix].path);
         self.open_files.remove(ix);
         self.active_file = match self.active_file {
             _ if self.open_files.is_empty() => None,
@@ -738,6 +756,8 @@ impl Workspace {
                 .child(TextView::new(markdown).size_full().scrollable(true).p_6())
                 .into_any_element(),
             FileContent::Text { editor, .. } => Editor::new(editor)
+                // Outside the repository: toolchain sources reached by go to definition.
+                .readonly(std::path::Path::new(&file.path).is_absolute())
                 .bordered(false)
                 .size_full()
                 .font_family(cx.theme().mono_font_family.clone())
