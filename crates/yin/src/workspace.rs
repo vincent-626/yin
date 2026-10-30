@@ -15,6 +15,7 @@ use gpui_kit::component::{
     resizable::{h_resizable, resizable_panel},
     scroll::Scrollbar,
     status_bar::StatusBar,
+    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::{
@@ -29,6 +30,7 @@ use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
 mod branches;
+mod history;
 mod remote;
 mod staging;
 
@@ -57,12 +59,22 @@ pub(crate) mod actions {
             SwitchBranch,
             StageLines,
             StageHunk,
+            ShowChanges,
+            ShowHistory,
         ]
     );
 }
 use actions::*;
 
 const CHANGES_CONTEXT: &str = "Changes";
+const HISTORY_CONTEXT: &str = "History";
+
+/// What the sidebar shows; the main pane follows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Panel {
+    Changes,
+    History,
+}
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -87,6 +99,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
+        KeyBinding::new("cmd-2", ShowHistory, Some("Workspace")),
+        KeyBinding::new("down", SelectNext, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("j", SelectNext, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("up", SelectPrevious, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("k", SelectPrevious, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("enter", FocusDiff, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("b", SwitchBranch, Some(HISTORY_CONTEXT)),
         KeyBinding::new("space", StageLines, Some("Diff")),
         KeyBinding::new("s", StageHunk, Some("Diff")),
     ]);
@@ -119,6 +139,18 @@ pub struct Workspace {
     _watcher: Option<RepoWatcher>,
     _watch_task: Task<()>,
     remote_op: Option<RemoteOp>,
+    panel: Panel,
+    commits: Arc<Vec<yin_git::Commit>>,
+    commit_selected: Option<usize>,
+    commit_detail: Option<history::CommitDetail>,
+    history_diff: Entity<DiffState>,
+    history_focus: FocusHandle,
+    history_scroll: UniformListScrollHandle,
+    history_loaded: bool,
+    /// HEAD when the history was read; a change means it is stale.
+    history_head: Option<String>,
+    _history_task: Task<()>,
+    _commit_task: Task<()>,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -130,6 +162,8 @@ impl Workspace {
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
+        let history_diff = cx.new(|cx| DiffState::new([], cx));
+        cx.observe(&history_diff, |_, _, cx| cx.notify()).detach();
         cx.observe_window_bounds(window, |this, _, cx| this.schedule_relayout(cx))
             .detach();
         let changes_focus = cx.focus_handle().tab_stop(true);
@@ -177,6 +211,17 @@ impl Workspace {
             _watcher: None,
             _watch_task: Task::ready(()),
             remote_op: None,
+            panel: Panel::Changes,
+            commits: Arc::default(),
+            commit_selected: None,
+            commit_detail: None,
+            history_diff,
+            history_focus: cx.focus_handle().tab_stop(true),
+            history_scroll: UniformListScrollHandle::new(),
+            history_loaded: false,
+            history_head: None,
+            _history_task: Task::ready(()),
+            _commit_task: Task::ready(()),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
@@ -233,6 +278,7 @@ impl Workspace {
                     .await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     this.diff.update(cx, |_, cx| cx.notify());
+                    this.history_diff.update(cx, |_, cx| cx.notify());
                 }) else {
                     return;
                 };
@@ -295,6 +341,9 @@ impl Workspace {
         self.rows = Arc::new(rows);
         self.status = status;
         self.loaded = true;
+        if self.history_loaded && self.history_head != self.status.branch.oid {
+            self.load_history(cx);
+        }
         // Reload even when the selection is unchanged: the file may have changed.
         self.load_diff(cx);
     }
@@ -560,9 +609,73 @@ impl Workspace {
     }
 
     fn focus_diff(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.diff.read(cx).files().is_empty() {
-            self.diff.read(cx).focus_handle(cx).focus(window, cx);
+        let diff = match self.panel {
+            Panel::Changes => &self.diff,
+            Panel::History => &self.history_diff,
+        };
+        if !diff.read(cx).files().is_empty() {
+            diff.read(cx).focus_handle(cx).focus(window, cx);
         }
+    }
+
+    /// Shows a sidebar tab and focuses its list.
+    fn show_panel(&mut self, panel: Panel, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel = panel;
+        self.sidebar_visible = true;
+        match panel {
+            Panel::Changes => self.changes_focus.focus(window, cx),
+            Panel::History => {
+                if !self.history_loaded {
+                    self.load_history(cx);
+                }
+                self.history_focus.focus(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .bg(cx.theme().sidebar)
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        TabBar::new("sidebar-tabs")
+                            .segmented()
+                            .w_full()
+                            .selected_index(match self.panel {
+                                Panel::Changes => 0,
+                                Panel::History => 1,
+                            })
+                            .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                                let panel = if *ix == 0 {
+                                    Panel::Changes
+                                } else {
+                                    Panel::History
+                                };
+                                this.show_panel(panel, window, cx);
+                            }))
+                            .child(Tab::new().flex_1().label(format!(
+                                "Changes{}",
+                                match self.status.entries.len() {
+                                    0 => String::new(),
+                                    n => format!(" {n}"),
+                                }
+                            )))
+                            .child(Tab::new().flex_1().label("History")),
+                    ),
+            )
+            .map(|this| match self.panel {
+                Panel::Changes => this.child(self.render_changes(window, cx)),
+                Panel::History => this.child(self.render_history(window, cx)),
+            })
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -603,21 +716,8 @@ impl Workspace {
         let focused = self.changes_focus.is_focused(window);
         let owner = cx.entity().downgrade();
         v_flex()
-            .size_full()
+            .flex_1()
             .min_h_0()
-            .bg(cx.theme().sidebar)
-            .child(
-                h_flex()
-                    .h_8()
-                    .flex_none()
-                    .px_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .text_xs()
-                    .font_medium()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("{} CHANGED FILES", self.status.entries.len())),
-            )
             .child(
                 div()
                     .id("changes")
@@ -890,13 +990,27 @@ impl Render for Workspace {
                 let mode = this.diff_mode;
                 this.diff.update(cx, |state, cx| state.set_mode(mode, cx));
             }))
-            .on_action(cx.listener(|this, _: &SelectNext, _, cx| {
-                let ix = changes::step(&this.rows, this.selected, 1);
-                this.select(ix, cx);
+            .on_action(cx.listener(|this, _: &SelectNext, _, cx| match this.panel {
+                Panel::Changes => {
+                    let ix = changes::step(&this.rows, this.selected, 1);
+                    this.select(ix, cx);
+                }
+                Panel::History => this.step_commit(1, cx),
             }))
-            .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| {
-                let ix = changes::step(&this.rows, this.selected, -1);
-                this.select(ix, cx);
+            .on_action(
+                cx.listener(|this, _: &SelectPrevious, _, cx| match this.panel {
+                    Panel::Changes => {
+                        let ix = changes::step(&this.rows, this.selected, -1);
+                        this.select(ix, cx);
+                    }
+                    Panel::History => this.step_commit(-1, cx),
+                }),
+            )
+            .on_action(cx.listener(|this, _: &ShowChanges, window, cx| {
+                this.show_panel(Panel::Changes, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowHistory, window, cx| {
+                this.show_panel(Panel::History, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleStaged, window, cx| {
                 if let Some(ix) = this.selected {
@@ -949,9 +1063,8 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &FocusDiff, window, cx| this.focus_diff(window, cx)))
             .on_action(cx.listener(|this, _: &FocusChanges, window, cx| {
-                this.sidebar_visible = true;
-                this.changes_focus.focus(window, cx);
-                cx.notify();
+                let panel = this.panel;
+                this.show_panel(panel, window, cx);
             }))
             .child(self.render_title_bar(cx))
             .child(
@@ -962,10 +1075,13 @@ impl Render for Workspace {
                                 resizable_panel()
                                     .size(rem * 20.)
                                     .size_range(rem * 14. ..rem * 40.)
-                                    .child(self.render_changes(window, cx)),
+                                    .child(self.render_sidebar(window, cx)),
                             )
                         })
-                        .child(resizable_panel().child(self.render_diff(window, cx))),
+                        .child(resizable_panel().child(match self.panel {
+                            Panel::Changes => self.render_diff(window, cx).into_any_element(),
+                            Panel::History => self.render_commit_detail(cx),
+                        })),
                 ),
             )
             .child(
