@@ -73,3 +73,27 @@ notification at launch.
 
 Open tabs, the sidebar tab and width, and the diff mode are restored per
 repository; the window's size and position are restored too.
+
+## Releases
+
+Pushing a tag that matches the version in `crates/yin/Cargo.toml` builds
+`yin.app` on GitHub Actions and attaches it to a GitHub release:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Install a release on another Mac (needs `gh`, logged in):
+
+```bash
+script/install-release          # latest, or: script/install-release v0.1.0
+```
+
+The app is ad-hoc signed, not notarized; `install-release` clears the
+download quarantine so macOS opens it. Downloading the zip by hand instead,
+right-click the app and choose Open the first time. Signing for real needs an
+Apple Developer ID ($99/year), then `codesign` with it and `notarytool` in the
+release workflow.
+
+CI (`.github/workflows/ci.yml`) runs format, clippy and every test on macOS for
+each push to `main` that touches code.

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Install yin from a GitHub release instead of building it:
+#   script/install-release            the latest release
+#   script/install-release v0.1.0     a specific one
+# Needs the GitHub CLI, logged in with access to the repository.
+set -euo pipefail
+repo=vincent-626/yin
+tag=${1:-}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+gh release download ${tag:+"$tag"} --repo "$repo" --pattern 'yin-*-macos-arm64.zip*' --dir "$work"
+zip=$(ls "$work"/yin-*-macos-arm64.zip)
+(cd "$work" && shasum -a 256 -c "$(basename "$zip").sha256")
+ditto -x -k "$zip" "$work"
+
+# The app is ad-hoc signed, not notarized: clear the download quarantine so
+# Gatekeeper lets it open.
+xattr -dr com.apple.quarantine "$work/yin.app"
+
+mkdir -p ~/Applications ~/.local/bin
+rm -rf ~/Applications/yin.app
+mv "$work/yin.app" ~/Applications/yin.app
+cat > ~/.local/bin/yin <<'SHIM'
+#!/usr/bin/env bash
+# Open a repository in yin (default: the current directory).
+target=$(cd "${1:-.}" && pwd)
+exec ~/Applications/yin.app/Contents/MacOS/yin "$target" >/dev/null 2>&1 &
+SHIM
+chmod +x ~/.local/bin/yin
+echo "Installed $(basename "$zip" .zip) to ~/Applications/yin.app"
