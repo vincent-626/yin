@@ -167,6 +167,41 @@ impl Repository {
         }
     }
 
+    /// One patch with every change against HEAD: staged, unstaged and
+    /// untracked, skipping `hidden` paths. Before the first commit, against
+    /// the empty tree.
+    pub fn diff_all(&self, status: &Status, hidden: &dyn Fn(&str) -> bool) -> Result<String> {
+        let tracked: Vec<&str> = status
+            .entries
+            .iter()
+            .filter(|entry| entry.status != FileStatus::Untracked && !hidden(&entry.path))
+            .map(|entry| entry.path.as_str())
+            .collect();
+        let mut patch = String::new();
+        if !tracked.is_empty() {
+            // The empty tree's id: diffing against it shows everything as added.
+            let base = if self.has_head() {
+                "HEAD"
+            } else {
+                "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            };
+            patch = self.git(
+                ["diff", base]
+                    .iter()
+                    .chain(DIFF_ARGS)
+                    .chain(&["--"])
+                    .chain(tracked.iter()),
+            )?;
+        }
+        for entry in status.untracked() {
+            if hidden(&entry.path) {
+                continue;
+            }
+            patch.push_str(&self.diff(&entry.path, DiffTarget::Untracked)?);
+        }
+        Ok(patch)
+    }
+
     /// Stages `paths`, including deletions.
     pub fn stage(&self, paths: &[&str]) -> Result<()> {
         if paths.is_empty() {

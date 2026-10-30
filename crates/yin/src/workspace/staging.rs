@@ -32,6 +32,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.review_all {
+            // The combined diff is against HEAD, not the index.
+            window.push_notification("Switch to one file (a) to stage lines.", cx);
+            return;
+        }
         let Some(key) = self.diff_key.clone() else {
             return;
         };

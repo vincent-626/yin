@@ -36,6 +36,7 @@ mod finder;
 mod history;
 mod lsp;
 mod remote;
+mod review_all;
 mod reviewing;
 mod worktrees;
 
@@ -86,6 +87,7 @@ pub(crate) mod actions {
             MarkAllReviewed,
             ToggleHideReviewed,
             SwitchWorktree,
+            ToggleReviewAll,
         ]
     );
 }
@@ -165,6 +167,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-r", MarkAllReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("h", ToggleHideReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("w", SwitchWorktree, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("a", ToggleReviewAll, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-alt-w", SwitchWorktree, Some("Workspace")),
         KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
@@ -218,6 +221,11 @@ pub struct Workspace {
     review_hashes: std::collections::HashMap<String, u64>,
     reviewed: Arc<std::collections::HashSet<String>>,
     hide_reviewed: bool,
+    /// The main pane shows every change at once instead of one file.
+    review_all: bool,
+    all_diff: Entity<DiffState>,
+    all_patch: String,
+    _all_task: Task<()>,
     rows: Arc<Vec<Row>>,
     selected: Option<usize>,
     loaded: bool,
@@ -285,6 +293,8 @@ impl Workspace {
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
+        let all_diff = cx.new(|cx| DiffState::new([], cx));
+        cx.observe(&all_diff, |_, _, cx| cx.notify()).detach();
         let history_diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&history_diff, |_, _, cx| cx.notify()).detach();
         cx.observe_window_bounds(window, |this, _, cx| this.schedule_relayout(cx))
@@ -318,6 +328,10 @@ impl Workspace {
             review_hashes: Default::default(),
             reviewed: Arc::default(),
             hide_reviewed: false,
+            review_all: false,
+            all_diff,
+            all_patch: String::new(),
+            _all_task: Task::ready(()),
             rows: Arc::default(),
             selected: None,
             loaded: false,
@@ -440,6 +454,7 @@ impl Workspace {
                 let Ok(()) = this.update(cx, |this, cx| {
                     this.diff.update(cx, |_, cx| cx.notify());
                     this.history_diff.update(cx, |_, cx| cx.notify());
+                    this.all_diff.update(cx, |_, cx| cx.notify());
                 }) else {
                     return;
                 };
@@ -576,6 +591,7 @@ impl Workspace {
         if self.selected_key() != previous {
             self.load_diff(cx);
         }
+        self.load_all_diff(cx);
         cx.notify();
     }
 
@@ -589,6 +605,9 @@ impl Workspace {
                 .scroll_to_item(ix, ScrollStrategy::Nearest);
         }
         self.load_diff(cx);
+        if self.review_all {
+            self.scroll_all_diff_to_selection(cx);
+        }
         cx.notify();
     }
 
@@ -867,6 +886,7 @@ impl Workspace {
 
     fn focus_diff(&self, window: &mut Window, cx: &mut Context<Self>) {
         let diff = match self.panel {
+            Panel::Changes if self.review_all => &self.all_diff,
             Panel::Changes => &self.diff,
             Panel::History => &self.history_diff,
             Panel::Files | Panel::Search => return self.focus_active_file(window, cx),
@@ -987,6 +1007,38 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .children(self.render_merge_banner(cx))
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .py_1()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().flex_1().child(if self.review_all {
+                        "Reviewing all changes"
+                    } else {
+                        "Reviewing one file"
+                    }))
+                    .child(
+                        Button::new("toggle-review-all")
+                            .ghost()
+                            .xsmall()
+                            .label(if self.review_all {
+                                "One file"
+                            } else {
+                                "All changes"
+                            })
+                            .tooltip_with_action(
+                                "Switch view",
+                                &ToggleReviewAll,
+                                Some(CHANGES_CONTEXT),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_review_all(cx))),
+                    ),
+            )
             .when(hidden > 0, |this| {
                 this.child(
                     div()
@@ -1351,6 +1403,7 @@ impl Render for Workspace {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleReviewed, _, cx| this.toggle_reviewed(cx)))
+            .on_action(cx.listener(|this, _: &ToggleReviewAll, _, cx| this.toggle_review_all(cx)))
             .on_action(cx.listener(|this, _: &SwitchWorktree, window, cx| {
                 this.open_worktree_picker(window, cx)
             }))
@@ -1438,6 +1491,7 @@ impl Render for Workspace {
                             )
                         })
                         .child(resizable_panel().child(match self.panel {
+                            Panel::Changes if self.review_all => self.render_all_diff(cx),
                             Panel::Changes => self.render_diff(window, cx).into_any_element(),
                             Panel::History => self.render_commit_detail(cx),
                             Panel::Files | Panel::Search => self.render_open_files(cx),

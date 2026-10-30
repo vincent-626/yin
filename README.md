@@ -40,6 +40,7 @@ For development: `cargo run -- /path/to/repo`, and optionally
 | | `r` / `shift-r` | Mark file / everything reviewed (unmarked again when it changes) |
 | | `h` | Hide or show reviewed files |
 | | `w` (or `cmd-alt-w`) | Switch worktree |
+| | `a` | Review all changes in one diff / one file at a time |
 | Diff | `shift-up` / `shift-down` | Select lines |
 | | `space` / `s` | Stage (or unstage) selected lines / their hunk |
 | History list | `j` / `k`, `enter` | Move, read the diff |

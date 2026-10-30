@@ -530,3 +530,37 @@ fn lists_worktrees() {
     );
     assert!(worktrees.iter().all(|w| w.oid.is_some() && !w.is_bare));
 }
+
+#[test]
+fn diff_all_combines_staged_unstaged_and_untracked() {
+    let fx = committed("a\n");
+    fx.write("f.txt", "a\nstaged\n");
+    fx.repo.stage(&["f.txt"]).unwrap();
+    fx.write("f.txt", "a\nstaged\nunstaged\n");
+    fx.write("new.txt", "brand new\n");
+    fx.write("hidden.txt", "skip me\n");
+    let status = fx.repo.status().unwrap();
+    let patch = fx
+        .repo
+        .diff_all(&status, &|path| path == "hidden.txt")
+        .unwrap();
+    assert!(
+        patch.contains("+staged") && patch.contains("+unstaged"),
+        "{patch}"
+    );
+    assert!(patch.contains("+brand new"), "{patch}");
+    assert!(!patch.contains("skip me"), "{patch}");
+
+    // Before the first commit everything shows as added.
+    let fresh = Fixture::new();
+    fresh.write("x.txt", "x\n");
+    fresh.repo.stage(&["x.txt"]).unwrap();
+    let status = fresh.repo.status().unwrap();
+    assert!(
+        fresh
+            .repo
+            .diff_all(&status, &|_| false)
+            .unwrap()
+            .contains("+x")
+    );
+}
