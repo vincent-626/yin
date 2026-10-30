@@ -8768,6 +8768,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yin_lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "yoke"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

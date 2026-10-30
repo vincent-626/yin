@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/yin", "crates/yin_fs", "crates/yin_git"]
+members = ["crates/yin", "crates/yin_fs", "crates/yin_git", "crates/yin_lsp"]
 default-members = ["crates/yin"]
 
 [workspace.package]
@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 yin_fs = { path = "crates/yin_fs" }
 yin_git = { path = "crates/yin_git" }
+yin_lsp = { path = "crates/yin_lsp" }
 
 anyhow = "1"
 # GPUI Kit re-exports GPUI (the `gpui-pre` snapshot it was built against) plus
