@@ -3,8 +3,6 @@
 A fast, native code workspace for reviewing changes, running git and reading
 code — built for the way coding agents work.
 
-![Reviewing a change in yin](docs/screenshots/review.png)
-
 When an agent writes most of the code, an editor's job shrinks to reviewing what
 changed, committing it, and reading around it. yin does that and little else:
 it opens on what changed, follows the working tree live while the agent edits,
@@ -24,8 +22,6 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
 - Mark files reviewed and hide them; a file comes back the moment an agent
   touches it again.
 
-![Every change in one diff, with a reviewed file struck through](docs/screenshots/all-changes.png)
-
 **Git**
 - Commit and amend; hook output shows when a hook fails.
 - Fetch, pull and push. A diverged pull offers to rebase; a rejected push offers
@@ -33,16 +29,12 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
 - Switch or create branches, stash, and resolve merge conflicts in the diff.
 - History, per-file history, blame, and a picker for worktrees.
 
-![Commit history](docs/screenshots/history.png)
-
 **Read and navigate**
 - File tree coloured by git status, fuzzy file finder, project search.
 - Rendered markdown, light editing with save, find and go to line.
 - Go to definition, find references, hover and diagnostics through language
   servers (rust-analyzer, gopls, typescript-language-server, pyright, clangd),
   started automatically when installed.
-
-![Files and a rendered markdown document](docs/screenshots/files.png)
 
 **Everywhere**
 - Keyboard first, with a command palette (`cmd-shift-p`) listing every action
