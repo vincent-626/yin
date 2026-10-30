@@ -1,6 +1,6 @@
 //! The flattened row model behind the Changes list.
 
-use yin_git::{Change, DiffTarget, FileStatus, Status, StatusEntry};
+use yin_git::{Change, DiffTarget, FileStatus, Stash, Status, StatusEntry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Section {
@@ -8,6 +8,7 @@ pub enum Section {
     Staged,
     Changes,
     Untracked,
+    Stashes,
 }
 
 impl Section {
@@ -17,14 +18,17 @@ impl Section {
             Self::Staged => "Staged",
             Self::Changes => "Changes",
             Self::Untracked => "Untracked",
+            Self::Stashes => "Stashes",
         }
     }
 
-    pub fn diff_target(self) -> DiffTarget {
+    /// The working-tree diff this section's files show; stashes have none.
+    pub fn diff_target(self) -> Option<DiffTarget> {
         match self {
-            Self::Staged => DiffTarget::Staged,
-            Self::Conflicts | Self::Changes => DiffTarget::Unstaged,
-            Self::Untracked => DiffTarget::Untracked,
+            Self::Staged => Some(DiffTarget::Staged),
+            Self::Conflicts | Self::Changes => Some(DiffTarget::Unstaged),
+            Self::Untracked => Some(DiffTarget::Untracked),
+            Self::Stashes => None,
         }
     }
 
@@ -34,7 +38,8 @@ impl Section {
     }
 }
 
-/// A file in one section. The same path can appear in Staged and Changes.
+/// A file in one section. The same path can appear in Staged and Changes. For
+/// a stash, `path` is its reference, `stash@{n}`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileKey {
     pub section: Section,
@@ -51,6 +56,7 @@ pub enum Row {
         section: Section,
         entry: StatusEntry,
     },
+    Stash(Stash),
 }
 
 impl Row {
@@ -60,8 +66,17 @@ impl Row {
                 section: *section,
                 path: entry.path.clone(),
             }),
+            Row::Stash(stash) => Some(FileKey {
+                section: Section::Stashes,
+                path: stash.reference(),
+            }),
             Row::Header { .. } => None,
         }
+    }
+
+    /// Whether the row can be selected.
+    pub fn is_item(&self) -> bool {
+        !matches!(self, Row::Header { .. })
     }
 }
 
@@ -75,7 +90,7 @@ pub fn change_for(section: Section, entry: &StatusEntry) -> Change {
     }
 }
 
-pub fn rows(status: &Status) -> Vec<Row> {
+pub fn rows(status: &Status, stashes: &[Stash]) -> Vec<Row> {
     let sections: [(Section, Vec<&StatusEntry>); 4] = [
         (Section::Conflicts, status.conflicted().collect()),
         (Section::Staged, status.staged().collect()),
@@ -96,6 +111,13 @@ pub fn rows(status: &Status) -> Vec<Row> {
             entry: entry.clone(),
         }));
     }
+    if !stashes.is_empty() {
+        rows.push(Row::Header {
+            section: Section::Stashes,
+            count: stashes.len(),
+        });
+        rows.extend(stashes.iter().cloned().map(Row::Stash));
+    }
     rows
 }
 
@@ -114,13 +136,13 @@ pub fn reselect(
     // Prefer the next file down, then the nearest one above.
     (start..rows.len())
         .chain((0..start).rev())
-        .find(|&ix| matches!(rows[ix], Row::File { .. }))
+        .find(|&ix| rows[ix].is_item())
 }
 
 /// The next file row from `from` in `direction`, skipping headers.
 pub fn step(rows: &[Row], from: Option<usize>, direction: isize) -> Option<usize> {
     let Some(from) = from else {
-        return rows.iter().position(|row| matches!(row, Row::File { .. }));
+        return rows.iter().position(Row::is_item);
     };
     let mut ix = from as isize;
     loop {
@@ -128,7 +150,7 @@ pub fn step(rows: &[Row], from: Option<usize>, direction: isize) -> Option<usize
         if ix < 0 || ix as usize >= rows.len() {
             return Some(from);
         }
-        if matches!(rows[ix as usize], Row::File { .. }) {
+        if rows[ix as usize].is_item() {
             return Some(ix as usize);
         }
     }
@@ -171,12 +193,13 @@ mod tests {
 
     #[test]
     fn groups_files_by_section() {
-        let rows = rows(&status());
+        let rows = rows(&status(), &[]);
         let shape: Vec<String> = rows
             .iter()
             .map(|row| match row {
                 Row::Header { section, count } => format!("# {} {count}", section.title()),
                 Row::File { entry, .. } => entry.path.clone(),
+                Row::Stash(stash) => stash.message.clone(),
             })
             .collect();
         assert_eq!(
@@ -195,7 +218,7 @@ mod tests {
 
     #[test]
     fn navigation_skips_headers_and_stops_at_ends() {
-        let rows = rows(&status());
+        let rows = rows(&status(), &[]);
         assert_eq!(step(&rows, None, 1), Some(1));
         assert_eq!(step(&rows, Some(2), 1), Some(4));
         assert_eq!(step(&rows, Some(4), -1), Some(2));
@@ -205,7 +228,7 @@ mod tests {
 
     #[test]
     fn reselects_same_file_or_neighbor() {
-        let rows = rows(&status());
+        let rows = rows(&status(), &[]);
         let key = FileKey {
             section: Section::Changes,
             path: "both.rs".into(),

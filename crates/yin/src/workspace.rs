@@ -33,6 +33,7 @@ mod branches;
 mod history;
 mod remote;
 mod staging;
+mod stash;
 
 use remote::RemoteOp;
 
@@ -61,6 +62,8 @@ pub(crate) mod actions {
             StageHunk,
             ShowChanges,
             ShowHistory,
+            StashPush,
+            StashPop,
         ]
     );
 }
@@ -99,6 +102,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
         KeyBinding::new("cmd-2", ShowHistory, Some("Workspace")),
         KeyBinding::new("down", SelectNext, Some(HISTORY_CONTEXT)),
@@ -115,6 +120,7 @@ pub fn init(cx: &mut App) {
 pub struct Workspace {
     repo: Repository,
     status: Status,
+    stashes: Vec<yin_git::Stash>,
     rows: Arc<Vec<Row>>,
     selected: Option<usize>,
     loaded: bool,
@@ -189,6 +195,7 @@ impl Workspace {
         let mut this = Self {
             repo,
             status: Status::default(),
+            stashes: Vec::new(),
             rows: Arc::default(),
             selected: None,
             loaded: false,
@@ -319,13 +326,18 @@ impl Workspace {
         let generation = self.status_generation;
         let repo = self.repo.clone();
         self._status_task = cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { repo.status() }).await;
+            let result = cx
+                .background_spawn(async move {
+                    let status = repo.status()?;
+                    anyhow::Ok((status, repo.stashes()?))
+                })
+                .await;
             this.update(cx, |this, cx| {
                 if this.status_generation != generation {
                     return;
                 }
                 match result {
-                    Ok(status) => this.install_status(status, cx),
+                    Ok((status, stashes)) => this.install_status(status, stashes, cx),
                     Err(error) => this.error = Some(error.to_string().into()),
                 }
                 cx.notify();
@@ -334,9 +346,15 @@ impl Workspace {
         });
     }
 
-    fn install_status(&mut self, status: Status, cx: &mut Context<Self>) {
+    fn install_status(
+        &mut self,
+        status: Status,
+        stashes: Vec<yin_git::Stash>,
+        cx: &mut Context<Self>,
+    ) {
         let previous = self.selected_key();
-        let rows = changes::rows(&status);
+        let rows = changes::rows(&status, &stashes);
+        self.stashes = stashes;
         self.selected = changes::reselect(&rows, previous.as_ref(), self.selected);
         self.rows = Arc::new(rows);
         self.status = status;
@@ -371,11 +389,18 @@ impl Workspace {
             return;
         };
         let repo = self.repo.clone();
+        let stash = self.stash_for(&key.path);
         self._diff_task = cx.spawn(async move |this, cx| {
             let target = key.section.diff_target();
             let path = key.path.clone();
             let result = cx
-                .background_spawn(async move { repo.diff(&path, target) })
+                .background_spawn(async move {
+                    match (target, stash) {
+                        (Some(target), _) => repo.diff(&path, target),
+                        (None, Some(stash)) => repo.stash_patch(&stash),
+                        (None, None) => Ok(String::new()),
+                    }
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.diff_generation != generation {
@@ -507,6 +532,9 @@ impl Workspace {
         let Some(key) = self.rows.get(ix).and_then(Row::key) else {
             return;
         };
+        if key.section == Section::Stashes {
+            return;
+        }
         self.run(
             move |repo| {
                 if key.section.is_staged() {
@@ -554,6 +582,12 @@ impl Workspace {
             Section::Untracked => true,
             Section::Staged | Section::Conflicts => {
                 window.push_notification("Unstage the file before discarding it.", cx);
+                return;
+            }
+            Section::Stashes => {
+                if let Some(stash) = self.stash_for(&key.path) {
+                    self.confirm_drop_stash(stash, window, cx);
+                }
                 return;
             }
         };
@@ -880,22 +914,27 @@ fn render_row(
                         .flex_1()
                         .child(format!("{} · {count}", section.title())),
                 )
-                .child(
-                    Button::new(("toggle-section", ix))
-                        .ghost()
-                        .xsmall()
-                        .label(if section.is_staged() {
-                            "Unstage all"
-                        } else {
-                            "Stage all"
-                        })
-                        .on_click(move |_, window, cx| {
-                            owner
-                                .update(cx, |this, cx| this.toggle_section(section, window, cx))
-                                .ok();
-                        }),
-                )
+                .when(section != Section::Stashes, |this| {
+                    this.child(
+                        Button::new(("toggle-section", ix))
+                            .ghost()
+                            .xsmall()
+                            .label(if section.is_staged() {
+                                "Unstage all"
+                            } else {
+                                "Stage all"
+                            })
+                            .on_click(move |_, window, cx| {
+                                owner
+                                    .update(cx, |this, cx| this.toggle_section(section, window, cx))
+                                    .ok();
+                            }),
+                    )
+                })
                 .into_any_element()
+        }
+        Row::Stash(stash) => {
+            stash::render_stash_row(ix, stash, selected == Some(ix), focused, owner, cx)
         }
         Row::File { section, entry } => {
             let change = changes::change_for(*section, entry);
@@ -1005,6 +1044,10 @@ impl Render for Workspace {
                     }
                     Panel::History => this.step_commit(-1, cx),
                 }),
+            )
+            .on_action(cx.listener(|this, _: &StashPush, window, cx| this.stash_push(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &StashPop, window, cx| this.stash_pop(None, window, cx)),
             )
             .on_action(cx.listener(|this, _: &ShowChanges, window, cx| {
                 this.show_panel(Panel::Changes, window, cx)

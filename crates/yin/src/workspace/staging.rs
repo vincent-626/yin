@@ -46,6 +46,10 @@ impl Workspace {
                 window.push_notification("Stage this file as a whole.", cx);
                 return;
             }
+            Section::Stashes => {
+                window.push_notification("Pop the stash to stage its changes.", cx);
+                return;
+            }
         };
         let start = position(range.side(), range.start());
         let end = position(range.end_side(), range.end());
