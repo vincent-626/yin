@@ -2,7 +2,7 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, TitleBar, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonVariant, ButtonVariants as _},
     kbd::Kbd,
     notification::Notification,
     v_flex,
@@ -42,6 +42,17 @@ pub struct Shell {
 impl Shell {
     pub fn new(repo: Option<Repository>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
+        let shell = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let unsaved = shell
+                .read_with(cx, |shell, cx| shell.unsaved_files(cx))
+                .unwrap_or_default();
+            if unsaved.is_empty() {
+                return true;
+            }
+            confirm_discard(unsaved, window, cx, |_, cx| cx.quit());
+            false
+        });
         let mut this = Self {
             workspace: None,
             focus,
@@ -54,6 +65,22 @@ impl Shell {
             }
         }
         this
+    }
+
+    fn unsaved_files(&self, cx: &App) -> Vec<String> {
+        self.workspace
+            .as_ref()
+            .map(|workspace| workspace.read(cx).unsaved_files())
+            .unwrap_or_default()
+    }
+
+    fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let unsaved = self.unsaved_files(cx);
+        if unsaved.is_empty() {
+            cx.quit();
+        } else {
+            confirm_discard(unsaved, window, cx, |_, cx| cx.quit());
+        }
     }
 
     fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
@@ -80,7 +107,19 @@ impl Shell {
                 .background_spawn(async move { Repository::open(&path) })
                 .await;
             this.update_in(cx, |this, window, cx| match result {
-                Ok(repo) => this.open_repo(repo, window, cx),
+                Ok(repo) => {
+                    let unsaved = this.unsaved_files(cx);
+                    if unsaved.is_empty() {
+                        this.open_repo(repo, window, cx);
+                    } else {
+                        let shell = cx.entity().downgrade();
+                        confirm_discard(unsaved, window, cx, move |window, cx| {
+                            shell
+                                .update(cx, |this, cx| this.open_repo(repo.clone(), window, cx))
+                                .ok();
+                        });
+                    }
+                }
                 Err(error) => window.push_notification(Notification::error(error.to_string()), cx),
             })
             .ok();
@@ -128,9 +167,37 @@ impl Render for Shell {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(cx.listener(|this, _: &Open, window, cx| this.prompt_open(window, cx)))
+            .on_action(cx.listener(|this, _: &Quit, window, cx| this.quit(window, cx)))
             .map(|this| match &self.workspace {
                 Some(workspace) => this.child(workspace.clone()),
                 None => this.child(self.render_welcome(window, cx)),
             })
     }
+}
+
+/// Asks before an action that would lose unsaved edits, then runs it.
+fn confirm_discard(
+    unsaved: Vec<String>,
+    window: &mut Window,
+    cx: &mut App,
+    then: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    let then = std::rc::Rc::new(then);
+    let description = match unsaved.as_slice() {
+        [path] => format!("Your edits to {path} will be lost."),
+        paths => format!("Your edits to {} files will be lost.", paths.len()),
+    };
+    window.open_alert_dialog(cx, move |alert, _, _| {
+        let then = then.clone();
+        alert
+            .title("Discard unsaved changes?")
+            .description(description.clone())
+            .confirm()
+            .ok_text("Discard")
+            .ok_variant(ButtonVariant::Danger)
+            .on_ok(move |_, window, cx| {
+                then(window, cx);
+                true
+            })
+    });
 }

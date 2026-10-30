@@ -5,11 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
+    button::{Button, ButtonVariant, ButtonVariants as _},
     h_flex,
-    input::{Editor, EditorState, Position},
+    input::{Editor, EditorState, InputEvent, Position},
     list::ListItem,
+    notification::Notification,
     tab::{Tab, TabBar},
     text::{TextView, TextViewState},
     tree::{TreeEvent, TreeItem, TreeState, tree},
@@ -17,8 +18,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, Focusable as _, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, ScrollStrategy, SharedString, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, ScrollStrategy, SharedString, Styled as _, Subscription,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use yin_git::{Change, FileStatus};
 
@@ -32,14 +33,20 @@ pub(super) struct OpenFile {
     content: FileContent,
     /// Rendered markdown instead of its source.
     preview: bool,
+    /// The editor differs from what was last read or saved.
+    dirty: bool,
+    /// The file changed on disk while it had unsaved edits.
+    changed_on_disk: bool,
 }
 
 enum FileContent {
     Loading,
     Text {
+        /// What was last read from or written to disk.
         text: String,
         editor: Entity<EditorState>,
         markdown: Option<Entity<TextViewState>>,
+        _edits: Subscription,
     },
     /// Binary, too large, or unreadable; the reason is shown instead.
     Unavailable(String),
@@ -236,8 +243,9 @@ impl Workspace {
         });
         if let Some(ix) = self.open_files.iter().position(|file| file.path == path) {
             self.active_file = Some(ix);
-            if let Some(line) = line {
-                self.go_to_line(ix, line, window, cx);
+            match line {
+                Some(line) => self.go_to_line(ix, line, window, cx),
+                None => self.focus_active_file(window, cx),
             }
             cx.notify();
             return;
@@ -246,6 +254,8 @@ impl Workspace {
             path: path.to_owned(),
             content: FileContent::Loading,
             preview: is_markdown(path),
+            dirty: false,
+            changed_on_disk: false,
         });
         let ix = self.open_files.len() - 1;
         self.active_file = Some(ix);
@@ -270,8 +280,10 @@ impl Workspace {
                     return;
                 };
                 this.install_file(ix, result, window, cx);
-                if let Some(line) = line {
-                    this.go_to_line(ix, line, window, cx);
+                match line {
+                    Some(line) => this.go_to_line(ix, line, window, cx),
+                    None if this.active_file == Some(ix) => this.focus_active_file(window, cx),
+                    None => {}
                 }
                 cx.notify();
             })
@@ -295,13 +307,20 @@ impl Workspace {
                 return;
             }
         };
-        match &mut self.open_files[ix].content {
+        let file = &mut self.open_files[ix];
+        match &mut file.content {
             FileContent::Text {
                 text: current,
                 editor,
                 markdown,
+                ..
             } => {
                 if *current == text {
+                    return;
+                }
+                // Never overwrite unsaved edits; offer a reload instead.
+                if file.dirty {
+                    file.changed_on_disk = true;
                     return;
                 }
                 editor.update(cx, |editor, cx| editor.set_value(text.clone(), window, cx));
@@ -321,13 +340,103 @@ impl Workspace {
                 });
                 let markdown = is_markdown(&path)
                     .then(|| cx.new(|cx| TextViewState::markdown(&text, cx).selectable(true)));
+                let edits = cx.subscribe(&editor, move |this, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.file_edited(&path, cx);
+                    }
+                });
                 *content = FileContent::Text {
                     text,
                     editor,
                     markdown,
+                    _edits: edits,
                 };
             }
         }
+    }
+
+    /// Paths of open files with unsaved edits.
+    pub fn unsaved_files(&self) -> Vec<String> {
+        self.open_files
+            .iter()
+            .filter(|file| file.dirty)
+            .map(|file| file.path.clone())
+            .collect()
+    }
+
+    fn file_edited(&mut self, path: &str, cx: &mut Context<Self>) {
+        let Some(file) = self.open_files.iter_mut().find(|file| file.path == path) else {
+            return;
+        };
+        if let FileContent::Text {
+            text,
+            editor,
+            markdown,
+            ..
+        } = &file.content
+        {
+            let value = editor.read(cx).value();
+            file.dirty = value.as_ref() != text.as_str();
+            if let Some(markdown) = markdown {
+                markdown.update(cx, |markdown, cx| markdown.set_text(&value, cx));
+            }
+            cx.notify();
+        }
+    }
+
+    pub(super) fn save_active_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.active_file.and_then(|ix| self.open_files.get(ix)) else {
+            return;
+        };
+        let FileContent::Text { editor, .. } = &file.content else {
+            return;
+        };
+        let value = editor.read(cx).value().to_string();
+        let path = file.path.clone();
+        let full = self.repo.workdir().join(&path);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn({
+                    let value = value.clone();
+                    async move { std::fs::write(&full, value) }
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        if let Some(file) = this.open_files.iter_mut().find(|f| f.path == path)
+                            && let FileContent::Text { text, editor, .. } = &mut file.content
+                        {
+                            file.dirty = editor.read(cx).value().as_ref() != value;
+                            file.changed_on_disk = false;
+                            *text = value;
+                        }
+                    }
+                    Err(error) => window.push_notification(
+                        Notification::error(format!("Couldn't save {path}: {error}")),
+                        cx,
+                    ),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Replaces unsaved edits with the file as it is on disk.
+    fn reload_from_disk(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.open_files.get_mut(ix) else {
+            return;
+        };
+        file.dirty = false;
+        file.changed_on_disk = false;
+        if let FileContent::Text { text, .. } = &mut file.content {
+            // Forget the saved text so the next read always applies.
+            text.clear();
+        }
+        let path = file.path.clone();
+        self.load_file(path, None, window, cx);
     }
 
     /// Picks up changes on disk to open files, such as an agent's edits.
@@ -366,7 +475,38 @@ impl Workspace {
         }
     }
 
-    pub(super) fn close_file(&mut self, ix: usize, cx: &mut Context<Self>) {
+    /// Closes a tab, asking first when it has unsaved edits.
+    pub(super) fn close_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.open_files.get(ix) else {
+            return;
+        };
+        if !file.dirty {
+            return self.remove_file(ix, cx);
+        }
+        let path = file.path.clone();
+        let this = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let this = this.clone();
+            let path = path.clone();
+            alert
+                .title("Discard unsaved changes?")
+                .description(format!("Your edits to {path} will be lost."))
+                .confirm()
+                .ok_text("Discard")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, _, cx| {
+                    this.update(cx, |this, cx| {
+                        if let Some(ix) = this.open_files.iter().position(|f| f.path == path) {
+                            this.remove_file(ix, cx);
+                        }
+                    })
+                    .ok();
+                    true
+                })
+        });
+    }
+
+    fn remove_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix >= self.open_files.len() {
             return;
         }
@@ -530,7 +670,6 @@ impl Workspace {
                 .child(TextView::new(markdown).size_full().scrollable(true).p_6())
                 .into_any_element(),
             FileContent::Text { editor, .. } => Editor::new(editor)
-                .readonly(true)
                 .bordered(false)
                 .size_full()
                 .font_family(cx.theme().mono_font_family.clone())
@@ -556,14 +695,19 @@ impl Workspace {
                             }))
                             .children(self.open_files.iter().enumerate().map(|(ix, file)| {
                                 let name = file.path.rsplit('/').next().unwrap_or(&file.path);
-                                Tab::new().label(name.to_owned()).suffix(
+                                let label = if file.dirty {
+                                    format!("● {name}")
+                                } else {
+                                    name.to_owned()
+                                };
+                                Tab::new().label(label).suffix(
                                     Button::new(("close-file", ix))
                                         .ghost()
                                         .xsmall()
                                         .icon(IconName::Close)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             cx.stop_propagation();
-                                            this.close_file(ix, cx);
+                                            this.close_file(ix, window, cx);
                                         })),
                                 )
                             })),
@@ -589,6 +733,31 @@ impl Workspace {
                     .border_color(cx.theme().border)
                     .child(file.path.clone()),
             )
+            .when(file.changed_on_disk, |this| {
+                this.child(
+                    h_flex()
+                        .flex_none()
+                        .px_3()
+                        .py_1p5()
+                        .gap_2()
+                        .text_xs()
+                        .bg(cx.theme().warning.opacity(0.15))
+                        .child(
+                            div().flex_1().child(
+                                "Changed on disk while you were editing. Saving overwrites it.",
+                            ),
+                        )
+                        .child(
+                            Button::new("reload-file")
+                                .xsmall()
+                                .ghost()
+                                .label("Reload")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.reload_from_disk(active, window, cx)
+                                })),
+                        ),
+                )
+            })
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }

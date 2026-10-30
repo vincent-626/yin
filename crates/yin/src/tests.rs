@@ -267,3 +267,42 @@ fn commit_message_accepts_brackets(cx: &mut TestAppContext) {
         assert_eq!(workspace.read(cx).commit_message_text(cx), "[ui] []");
     });
 }
+
+#[gpui_kit::test]
+fn opens_edits_and_saves_a_file(cx: &mut TestAppContext) {
+    let dir = fixture();
+    let (window, workspace) = open(cx, Repository::open(dir.path()).unwrap());
+    cx.run_until_parked();
+    let keys = |cx: &mut TestAppContext, f: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            f(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    keys(cx, &|window, cx| {
+        window.press("cmd-p", cx);
+    });
+    keys(cx, &|window, cx| {
+        window.input("a.txt", cx);
+    });
+    keys(cx, &|window, cx| {
+        window.press("enter", cx);
+    });
+    // The editor has focus with the cursor at the start.
+    keys(cx, &|window, cx| {
+        window.input("zero\n", cx);
+    });
+    cx.update(|cx| assert_eq!(workspace.read(cx).unsaved_files(), ["a.txt"]));
+
+    keys(cx, &|window, cx| {
+        window.press("cmd-s", cx);
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "zero\none\ntwo\n"
+    );
+    cx.update(|cx| assert!(workspace.read(cx).unsaved_files().is_empty()));
+}

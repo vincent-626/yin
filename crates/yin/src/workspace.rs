@@ -74,6 +74,7 @@ pub(crate) mod actions {
             OpenSelected,
             FindFile,
             ProjectSearch,
+            SaveFile,
         ]
     );
 }
@@ -143,6 +144,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-3", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
+        KeyBinding::new("cmd-s", SaveFile, Some("Workspace")),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
         KeyBinding::new("down", SelectNext, Some(SEARCH_CONTEXT)),
@@ -1175,11 +1177,14 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &ShowFiles, window, cx| {
                 this.show_panel(Panel::Files, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &CloseFile, _, cx| {
+            .on_action(cx.listener(|this, _: &CloseFile, window, cx| {
                 if let Some(ix) = this.active_file {
-                    this.close_file(ix, cx);
+                    this.close_file(ix, window, cx);
                 }
             }))
+            .on_action(
+                cx.listener(|this, _: &SaveFile, window, cx| this.save_active_file(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
             .on_action(
