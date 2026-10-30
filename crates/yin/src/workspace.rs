@@ -35,6 +35,7 @@ mod files;
 mod finder;
 mod history;
 mod remote;
+mod search;
 mod staging;
 mod stash;
 
@@ -72,6 +73,7 @@ pub(crate) mod actions {
             TogglePreview,
             OpenSelected,
             FindFile,
+            ProjectSearch,
         ]
     );
 }
@@ -80,6 +82,7 @@ use actions::*;
 const CHANGES_CONTEXT: &str = "Changes";
 const HISTORY_CONTEXT: &str = "History";
 const FILES_CONTEXT: &str = "Files";
+const SEARCH_CONTEXT: &str = "SearchResults";
 
 /// What the sidebar shows; the main pane follows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,10 +90,11 @@ enum Panel {
     Changes,
     History,
     Files,
+    Search,
 }
 
 impl Panel {
-    const ALL: [Panel; 3] = [Panel::Changes, Panel::History, Panel::Files];
+    const ALL: [Panel; 4] = [Panel::Changes, Panel::History, Panel::Files, Panel::Search];
 
     fn index(self) -> usize {
         Self::ALL
@@ -131,6 +135,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
+        KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
+        KeyBinding::new("down", SelectNext, Some(SEARCH_CONTEXT)),
+        KeyBinding::new("j", SelectNext, Some(SEARCH_CONTEXT)),
+        KeyBinding::new("up", SelectPrevious, Some(SEARCH_CONTEXT)),
+        KeyBinding::new("k", SelectPrevious, Some(SEARCH_CONTEXT)),
+        KeyBinding::new("enter", OpenSelected, Some(SEARCH_CONTEXT)),
         KeyBinding::new("cmd-shift-v", TogglePreview, Some("Workspace")),
         KeyBinding::new("enter", OpenSelected, Some(FILES_CONTEXT)),
         KeyBinding::new("down", SelectNext, Some(HISTORY_CONTEXT)),
@@ -195,6 +205,11 @@ pub struct Workspace {
     _files_task: Task<()>,
     finder: Entity<CommandState>,
     finder_results: Vec<String>,
+    search: search::SearchState,
+    search_input: Entity<gpui_kit::component::input::InputState>,
+    search_focus: FocusHandle,
+    search_scroll: UniformListScrollHandle,
+    _search_task: Task<()>,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -278,6 +293,11 @@ impl Workspace {
             _files_task: Task::ready(()),
             finder: cx.new(|cx| CommandState::new(window, cx)),
             finder_results: Vec::new(),
+            search: Default::default(),
+            search_input: Self::new_search_input(window, cx),
+            search_focus: cx.focus_handle().tab_stop(true),
+            search_scroll: UniformListScrollHandle::new(),
+            _search_task: Task::ready(()),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
@@ -718,7 +738,7 @@ impl Workspace {
         let diff = match self.panel {
             Panel::Changes => &self.diff,
             Panel::History => &self.history_diff,
-            Panel::Files => return self.focus_active_file(window, cx),
+            Panel::Files | Panel::Search => return self.focus_active_file(window, cx),
         };
         if !diff.read(cx).files().is_empty() {
             diff.read(cx).focus_handle(cx).focus(window, cx);
@@ -743,6 +763,7 @@ impl Workspace {
                 }
                 self.file_tree.update(cx, |tree, cx| tree.focus(window, cx));
             }
+            Panel::Search => self.focus_search(window, cx),
         }
         cx.notify();
     }
@@ -776,13 +797,15 @@ impl Workspace {
                                 }
                             )))
                             .child(Tab::new().flex_1().label("History"))
-                            .child(Tab::new().flex_1().label("Files")),
+                            .child(Tab::new().flex_1().label("Files"))
+                            .child(Tab::new().flex_1().label("Search")),
                     ),
             )
             .map(|this| match self.panel {
                 Panel::Changes => this.child(self.render_changes(window, cx)),
                 Panel::History => this.child(self.render_history(window, cx)),
                 Panel::Files => this.child(self.render_file_tree(cx)),
+                Panel::Search => this.child(self.render_search(window, cx)),
             })
     }
 
@@ -1117,6 +1140,7 @@ impl Render for Workspace {
                 }
                 Panel::History => this.step_commit(1, cx),
                 Panel::Files => this.step_open_file(1, cx),
+                Panel::Search => this.step_search(1, cx),
             }))
             .on_action(
                 cx.listener(|this, _: &SelectPrevious, _, cx| match this.panel {
@@ -1126,6 +1150,7 @@ impl Render for Workspace {
                     }
                     Panel::History => this.step_commit(-1, cx),
                     Panel::Files => this.step_open_file(-1, cx),
+                    Panel::Search => this.step_search(-1, cx),
                 }),
             )
             .on_action(cx.listener(|this, _: &StashPush, window, cx| this.stash_push(window, cx)))
@@ -1148,8 +1173,14 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
-            .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {
-                this.open_selected_tree_item(window, cx)
+            .on_action(
+                cx.listener(|this, _: &OpenSelected, window, cx| match this.panel {
+                    Panel::Search => this.open_search_result(window, cx),
+                    _ => this.open_selected_tree_item(window, cx),
+                }),
+            )
+            .on_action(cx.listener(|this, _: &ProjectSearch, window, cx| {
+                this.show_panel(Panel::Search, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleStaged, window, cx| {
                 if let Some(ix) = this.selected {
@@ -1220,7 +1251,7 @@ impl Render for Workspace {
                         .child(resizable_panel().child(match self.panel {
                             Panel::Changes => self.render_diff(window, cx).into_any_element(),
                             Panel::History => self.render_commit_detail(cx),
-                            Panel::Files => self.render_open_files(cx),
+                            Panel::Files | Panel::Search => self.render_open_files(cx),
                         })),
                 ),
             )

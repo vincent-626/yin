@@ -223,7 +223,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_panel(super::Panel::Files, window, cx);
+        // Results open beside the search; anything else shows the tree.
+        if self.panel != super::Panel::Search {
+            self.show_panel(super::Panel::Files, window, cx);
+        }
         self.file_tree.update(cx, |tree, cx| {
             let id = SharedString::from(path.to_owned());
             tree.reveal_item(&id, ScrollStrategy::Center, cx);
