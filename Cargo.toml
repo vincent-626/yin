@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/yin", "crates/yin_git"]
+members = ["crates/yin", "crates/yin_fs", "crates/yin_git"]
 default-members = ["crates/yin"]
 
 [workspace.package]
@@ -8,6 +8,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+yin_fs = { path = "crates/yin_fs" }
 yin_git = { path = "crates/yin_git" }
 
 anyhow = "1"
