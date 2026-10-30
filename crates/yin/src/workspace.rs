@@ -46,6 +46,7 @@ pub use worktrees::OpenRepository;
 mod search;
 mod staging;
 mod stash;
+mod style;
 
 use remote::RemoteOp;
 
@@ -1023,7 +1024,6 @@ impl Workspace {
             (None, Some(oid)) => format!("detached at {}", &oid[..oid.len().min(7)]),
             (None, None) => "no commits".into(),
         };
-        let muted = cx.theme().muted_foreground;
         TitleBar::new().child(
             h_flex()
                 .size_full()
@@ -1034,7 +1034,6 @@ impl Workspace {
                     Button::new("branch")
                         .ghost()
                         .xsmall()
-                        .text_color(muted)
                         .icon(Icon::empty().path("icons/git-branch.svg"))
                         .label(head)
                         .tooltip_with_action("Switch branch", &SwitchBranch, Some(CHANGES_CONTEXT))
@@ -1225,10 +1224,11 @@ impl Workspace {
                     )
                 } else {
                     this.child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(Diff::new(&self.diff).line_number(true)),
+                        div().flex_1().min_h_0().child(
+                            Diff::new(&self.diff)
+                                .line_number(true)
+                                .render_header(|file, _, cx| style::diff_file_header(file, cx)),
+                        ),
                     )
                 }
             })

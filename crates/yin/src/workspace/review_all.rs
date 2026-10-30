@@ -83,7 +83,11 @@ impl Workspace {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .child(Diff::new(&self.all_diff).line_number(true))
+            .child(
+                Diff::new(&self.all_diff)
+                    .line_number(true)
+                    .render_header(|file, _, cx| super::style::diff_file_header(file, cx)),
+            )
             .into_any_element()
     }
 }

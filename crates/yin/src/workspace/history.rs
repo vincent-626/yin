@@ -276,7 +276,7 @@ impl Workspace {
                     .gap_1()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(div().font_medium().child(subject))
+                    .child(div().text_lg().font_semibold().child(subject))
                     .when(!body.is_empty(), |this| {
                         this.child(
                             div()
@@ -294,23 +294,25 @@ impl Workspace {
                     })
                     .child(
                         h_flex()
+                            .pt_1()
                             .gap_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
+                            .child(super::style::hash(&commit.short_oid, cx))
                             .child(
                                 div()
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .child(commit.short_oid.clone()),
+                                    .text_color(cx.theme().foreground)
+                                    .child(commit.author.clone()),
                             )
-                            .child(commit.author.clone())
                             .child(relative_time(commit.time)),
                     ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(Diff::new(&self.history_diff).line_number(true)),
+                div().flex_1().min_h_0().child(
+                    Diff::new(&self.history_diff)
+                        .line_number(true)
+                        .render_header(|file, _, cx| super::style::diff_file_header(file, cx)),
+                ),
             )
             .into_any_element()
     }
@@ -364,12 +366,13 @@ fn render_commit_row(
                         .gap_2()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
+                        .child(super::style::hash(&commit.short_oid, cx))
                         .child(
                             div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(commit.short_oid.clone()),
+                                .truncate()
+                                .text_color(cx.theme().foreground.opacity(0.8))
+                                .child(commit.author.clone()),
                         )
-                        .child(div().truncate().child(commit.author.clone()))
                         .child(div().flex_none().child(relative_time(commit.time))),
                 ),
         )

@@ -121,12 +121,13 @@ fn render_blame_line(
                     if committed {
                         this.cursor_pointer()
                             .hover(|this| this.text_color(cx.theme().foreground))
-                            .child(div().flex_none().child(line.oid[..7].to_owned()))
+                            .child(super::style::hash(&line.oid, cx))
                             .child(
                                 div()
                                     .w_24()
                                     .flex_none()
                                     .truncate()
+                                    .text_color(cx.theme().foreground.opacity(0.8))
                                     .child(line.author.clone()),
                             )
                             .child(div().flex_1().truncate().child(line.summary.clone()))
