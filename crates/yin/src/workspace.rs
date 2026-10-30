@@ -27,6 +27,10 @@ use yin_git::{Change, Repository, Status};
 use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
+mod remote;
+
+use remote::RemoteOp;
+
 mod actions {
     gpui_kit::actions!(
         yin,
@@ -44,6 +48,9 @@ mod actions {
             Commit,
             FocusCommitMessage,
             Discard,
+            Fetch,
+            Pull,
+            Push,
         ]
     );
 }
@@ -70,6 +77,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-enter", Commit, Some("Workspace")),
         KeyBinding::new("c", FocusCommitMessage, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-backspace", Discard, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("f", Fetch, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
     ]);
 }
 
@@ -99,6 +109,8 @@ pub struct Workspace {
     _operation_task: Task<()>,
     _watcher: Option<RepoWatcher>,
     _watch_task: Task<()>,
+    remote_op: Option<RemoteOp>,
+    _remote_task: Task<()>,
     _relayout_task: Task<()>,
 }
 
@@ -153,6 +165,8 @@ impl Workspace {
             _operation_task: Task::ready(()),
             _watcher: None,
             _watch_task: Task::ready(()),
+            remote_op: None,
+            _remote_task: Task::ready(()),
             _relayout_task: Task::ready(()),
         };
         // The test scheduler is deterministic and rejects wakeups from the
@@ -545,12 +559,9 @@ impl Workspace {
                         .child(Icon::empty().path("icons/git-branch.svg").xsmall())
                         .child(head),
                 )
-                .when(branch.ahead > 0, |this| {
-                    this.child(div().text_color(muted).child(format!("↑{}", branch.ahead)))
-                })
-                .when(branch.behind > 0, |this| {
-                    this.child(div().text_color(muted).child(format!("↓{}", branch.behind)))
-                }),
+                .child(div().flex_1())
+                .child(self.render_sync_buttons(cx))
+                .child(div().w_2()),
         )
     }
 
@@ -856,6 +867,19 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Commit, window, cx| this.commit(window, cx)))
             .on_action(
                 cx.listener(|this, _: &Discard, window, cx| this.discard_selected(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &Fetch, window, cx| {
+                this.run_remote(RemoteOp::Fetch, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &Pull, window, cx| {
+                    this.run_remote(RemoteOp::Pull, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &Push, window, cx| {
+                    this.run_remote(RemoteOp::Push, window, cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &FocusCommitMessage, window, cx| {
                 this.sidebar_visible = true;
