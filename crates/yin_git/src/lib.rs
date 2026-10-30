@@ -3,6 +3,8 @@
 //! Every operation shells out to the `git` CLI so hooks, signing, credential
 //! helpers and config behave exactly as they do in a terminal.
 
+mod history;
+mod patch;
 mod status;
 
 use std::ffi::OsStr;
@@ -12,6 +14,8 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
+pub use history::{BranchRef, Commit, Stash};
+pub use patch::{FilePatch, LinePosition, RowKind, Side};
 pub use status::{Branch, Change, FileStatus, Status, StatusEntry};
 
 /// A git working tree, addressed by its top-level directory.
@@ -251,6 +255,165 @@ impl Repository {
         // `--git-common-dir` is relative to the working directory when inside it.
         let common_dir = self.workdir.join(common_dir);
         Ok((git_dir, common_dir.canonicalize().unwrap_or(common_dir)))
+    }
+
+    /// Applies a partial patch from [`FilePatch::select`] to the index:
+    /// staging it, or with `reverse`, unstaging it.
+    pub fn apply_to_index(&self, patch: &str, reverse: bool) -> Result<()> {
+        let mut args = vec!["apply", "--cached", "--recount", "--whitespace=nowarn"];
+        if reverse {
+            args.push("--reverse");
+        }
+        args.push("-");
+        self.run(args, Some(patch), &[0]).map(drop)
+    }
+
+    /// Commits reachable from HEAD, newest first.
+    pub fn log(&self, limit: usize) -> Result<Vec<Commit>> {
+        if !self.has_head() {
+            return Ok(Vec::new());
+        }
+        let output = self.git([
+            "log",
+            "-z",
+            "--no-show-signature",
+            "--encoding=UTF-8",
+            history::LOG_FORMAT,
+            &format!("--max-count={limit}"),
+            "HEAD",
+            "--",
+        ])?;
+        history::parse_log(&output)
+    }
+
+    /// A commit's full message.
+    pub fn commit_message(&self, oid: &str) -> Result<String> {
+        Ok(self
+            .git([
+                "show",
+                "--no-patch",
+                "--no-show-signature",
+                "--format=%B",
+                oid,
+                "--",
+            ])?
+            .trim_end()
+            .to_owned())
+    }
+
+    /// The patch a commit introduces; merges against their first parent.
+    pub fn commit_patch(&self, oid: &str) -> Result<String> {
+        self.git(
+            ["show", "--format=", "--first-parent", "--no-show-signature"]
+                .iter()
+                .chain(DIFF_ARGS)
+                .chain(&[oid, "--"]),
+        )
+    }
+
+    pub fn branches(&self) -> Result<Vec<BranchRef>> {
+        let output = self.git([
+            "for-each-ref",
+            history::BRANCH_FORMAT,
+            "refs/heads",
+            "refs/remotes",
+        ])?;
+        history::parse_branches(&output)
+    }
+
+    /// Checks out a branch. A remote branch gets a local tracking branch.
+    pub fn switch(&self, branch: &BranchRef) -> Result<()> {
+        if branch.is_remote {
+            self.git(["switch", "--track", &branch.name]).map(drop)
+        } else {
+            self.git(["switch", &branch.name]).map(drop)
+        }
+    }
+
+    /// Creates a branch at HEAD and checks it out.
+    pub fn create_branch(&self, name: &str) -> Result<()> {
+        self.git(["check-ref-format", "--branch", name])
+            .map_err(|_| anyhow!("{name:?} is not a valid branch name"))?;
+        self.git(["switch", "--create", name]).map(drop)
+    }
+
+    pub fn remotes(&self) -> Result<Vec<String>> {
+        Ok(self.git(["remote"])?.lines().map(str::to_owned).collect())
+    }
+
+    pub fn fetch(&self) -> Result<()> {
+        self.git(["fetch", "--all", "--prune"]).map(drop)
+    }
+
+    /// Fast-forwards to the upstream; refuses to create a merge.
+    pub fn pull(&self) -> Result<()> {
+        self.git(["pull", "--ff-only"]).map(drop)
+    }
+
+    /// Pushes the current branch, setting its upstream on the first push.
+    pub fn push(&self, branch: &Branch) -> Result<()> {
+        if branch.upstream.is_some() {
+            return self.git(["push"]).map(drop);
+        }
+        if branch.head.is_none() {
+            bail!("HEAD is detached; switch to a branch to push");
+        }
+        let remotes = self.remotes()?;
+        let remote = remotes
+            .iter()
+            .find(|remote| *remote == "origin")
+            .or(remotes.first())
+            .ok_or_else(|| anyhow!("this repository has no remote to push to"))?;
+        self.git(["push", "--set-upstream", remote, "HEAD"])
+            .map(drop)
+    }
+
+    pub fn stashes(&self) -> Result<Vec<Stash>> {
+        Ok(history::parse_stashes(&self.git([
+            "stash",
+            "list",
+            "--format=%s",
+        ])?))
+    }
+
+    /// Stashes all changes, untracked files included.
+    pub fn stash_push(&self, message: Option<&str>) -> Result<()> {
+        let mut args = vec!["stash", "push", "--include-untracked"];
+        if let Some(message) = message {
+            args.extend(["--message", message]);
+        }
+        self.git(args).map(drop)
+    }
+
+    pub fn stash_pop(&self, stash: &Stash) -> Result<()> {
+        self.git(["stash", "pop", "--index", &stash.reference()])
+            .map(drop)
+    }
+
+    pub fn stash_drop(&self, stash: &Stash) -> Result<()> {
+        self.git(["stash", "drop", &stash.reference()]).map(drop)
+    }
+
+    pub fn stash_patch(&self, stash: &Stash) -> Result<String> {
+        self.git(
+            ["stash", "show", "--patch", "--include-untracked"]
+                .iter()
+                .chain(DIFF_ARGS)
+                .chain(&[stash.reference().as_str()]),
+        )
+    }
+
+    /// Marks a conflicted file resolved with `contents`.
+    pub fn resolve_conflict(&self, path: &str, contents: &str) -> Result<()> {
+        std::fs::write(self.workdir.join(path), contents)
+            .with_context(|| format!("couldn't write {path}"))?;
+        self.stage(&[path])
+    }
+
+    /// The working file of a conflicted path, markers included.
+    pub fn read_file(&self, path: &str) -> Result<String> {
+        std::fs::read_to_string(self.workdir.join(path))
+            .with_context(|| format!("couldn't read {path}"))
     }
 
     pub fn has_head(&self) -> bool {
