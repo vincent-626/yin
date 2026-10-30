@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Send keystrokes to the running yin, one System Events command per argument:
+#   script/drive 'keystroke " "' 'keystroke "c"' 'keystroke return using command down'
+# Needs Accessibility permission for the terminal running it.
+set -euo pipefail
+pid=$(pgrep -nx yin) || { echo "yin is not running" >&2; exit 1; }
+osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true"
+sleep 0.4
+for command in "$@"; do
+  osascript -e "tell application \"System Events\" to $command"
+  sleep 0.5
+done

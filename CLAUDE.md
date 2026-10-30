@@ -39,6 +39,12 @@ for contributors to *those* projects. They do not apply to yin; ignore them.
 its window with `screencapture -l`, and quits. Use it to check UI changes
 visually before committing.
 
+To exercise interactions in the real app, launch it yourself
+(`./target/debug/yin <repo> &`), send keys with `script/drive` (System Events
+keystrokes), and capture with `screencapture -x -o -l <window id>`. Test
+against a throwaway repo in a scratch directory, never this one. Kill the app
+when done (`pkill -x yin`); a second instance steals keystrokes.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins Rust to Zed's version; `gpui-pre` needs it. No

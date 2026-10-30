@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
+    TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     diff::{Diff, DiffFile, DiffMode, DiffState},
     h_flex,
+    input::{InputEvent, Textarea, TextareaState},
     list::ListItem,
+    notification::Notification,
     resizable::{h_resizable, resizable_panel},
     scroll::Scrollbar,
     status_bar::StatusBar,
@@ -37,6 +40,8 @@ mod actions {
             UnstageAll,
             FocusDiff,
             FocusChanges,
+            Commit,
+            FocusCommitMessage,
         ]
     );
 }
@@ -61,6 +66,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("k", SelectPrevious, Some(CHANGES_CONTEXT)),
         KeyBinding::new("space", ToggleStaged, Some(CHANGES_CONTEXT)),
         KeyBinding::new("enter", FocusDiff, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("cmd-enter", Commit, Some("Workspace")),
+        KeyBinding::new("c", FocusCommitMessage, Some(CHANGES_CONTEXT)),
     ]);
 }
 
@@ -76,6 +83,10 @@ pub struct Workspace {
     diff_patch: String,
     diff_mode: DiffMode,
     error: Option<SharedString>,
+    commit_message: Entity<TextareaState>,
+    amend: bool,
+    /// A git write is running.
+    busy: bool,
     sidebar_visible: bool,
     changes_focus: FocusHandle,
     changes_scroll: UniformListScrollHandle,
@@ -93,6 +104,24 @@ impl Workspace {
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
         let changes_focus = cx.focus_handle().tab_stop(true);
         changes_focus.focus(window, cx);
+        let commit_message = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Commit message")
+                .auto_grow(3, 12)
+        });
+        cx.subscribe_in(
+            &commit_message,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: true, ..
+                } = event
+                {
+                    this.commit(window, cx);
+                }
+            },
+        )
+        .detach();
         let mut this = Self {
             repo,
             status: Status::default(),
@@ -104,6 +133,9 @@ impl Workspace {
             diff_patch: String::new(),
             diff_mode: DiffMode::Unified,
             error: None,
+            commit_message,
+            amend: false,
+            busy: false,
             sidebar_visible: true,
             changes_focus,
             changes_scroll: UniformListScrollHandle::new(),
@@ -226,13 +258,34 @@ impl Workspace {
     fn run(
         &mut self,
         operation: impl FnOnce(&Repository) -> anyhow::Result<()> + Send + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_then(operation, |_, _, _| {}, window, cx);
+    }
+
+    /// Like [`Self::run`], calling `on_success` when the operation succeeds.
+    /// Failures, such as hook output, become an error notification.
+    fn run_then(
+        &mut self,
+        operation: impl FnOnce(&Repository) -> anyhow::Result<()> + Send + 'static,
+        on_success: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let repo = self.repo.clone();
-        self._operation_task = cx.spawn(async move |this, cx| {
+        self.busy = true;
+        cx.notify();
+        self._operation_task = cx.spawn_in(window, async move |this, cx| {
             let result = cx.background_spawn(async move { operation(&repo) }).await;
-            this.update(cx, |this, cx| {
-                this.error = result.err().map(|error| error.to_string().into());
+            this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(()) => on_success(this, window, cx),
+                    Err(error) => {
+                        window.push_notification(Notification::error(error.to_string()), cx)
+                    }
+                }
                 this.refresh(cx);
                 cx.notify();
             })
@@ -240,7 +293,52 @@ impl Workspace {
         });
     }
 
-    fn toggle_staged_at(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let message = self.commit_message.read(cx).value().trim().to_string();
+        let amend = self.amend;
+        if self.busy || message.is_empty() || (!amend && self.status.staged().next().is_none()) {
+            return;
+        }
+        self.run_then(
+            move |repo| repo.commit(&message, amend),
+            |this, window, cx| {
+                this.amend = false;
+                this.commit_message
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                this.changes_focus.focus(window, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn toggle_amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.amend = !self.amend;
+        cx.notify();
+        if !self.amend || !self.commit_message.read(cx).value().trim().is_empty() {
+            return;
+        }
+        // Start from HEAD's message, as `git commit --amend` would.
+        let repo = self.repo.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let message = cx
+                .background_spawn(async move { repo.head_message() })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if let Ok(message) = message
+                    && this.amend
+                    && this.commit_message.read(cx).value().is_empty()
+                {
+                    this.commit_message
+                        .update(cx, |state, cx| state.set_value(message, window, cx));
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn toggle_staged_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(key) = self.rows.get(ix).and_then(Row::key) else {
             return;
         };
@@ -252,11 +350,12 @@ impl Workspace {
                     repo.stage(&[&key.path])
                 }
             },
+            window,
             cx,
         );
     }
 
-    fn toggle_section(&mut self, section: Section, cx: &mut Context<Self>) {
+    fn toggle_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<String> = self
             .rows
             .iter()
@@ -274,6 +373,7 @@ impl Workspace {
                     repo.stage(&paths)
                 }
             },
+            window,
             cx,
         );
     }
@@ -367,6 +467,48 @@ impl Workspace {
                     )
                     .child(Scrollbar::vertical(&self.changes_scroll)),
             )
+            .child(self.render_commit_box(cx))
+    }
+
+    fn render_commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_message = !self.commit_message.read(cx).value().trim().is_empty();
+        let can_commit =
+            !self.busy && has_message && (self.amend || self.status.staged().next().is_some());
+        v_flex()
+            .flex_none()
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(Textarea::new(&self.commit_message).small())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Checkbox::new("amend")
+                            .small()
+                            .label("Amend")
+                            .checked(self.amend)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_amend(window, cx)),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("commit")
+                            .primary()
+                            .small()
+                            .label(if self.amend { "Amend" } else { "Commit" })
+                            .loading(self.busy)
+                            .disabled(!can_commit)
+                            .tooltip_with_action(
+                                "Commit staged changes",
+                                &Commit,
+                                Some("Workspace"),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| this.commit(window, cx))),
+                    ),
+            )
     }
 
     fn render_diff(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -441,9 +583,9 @@ fn render_row(
                         } else {
                             "Stage all"
                         })
-                        .on_click(move |_, _, cx| {
+                        .on_click(move |_, window, cx| {
                             owner
-                                .update(cx, |this, cx| this.toggle_section(section, cx))
+                                .update(cx, |this, cx| this.toggle_section(section, window, cx))
                                 .ok();
                         }),
                 )
@@ -474,9 +616,11 @@ fn render_row(
                             Checkbox::new(("stage", ix))
                                 .small()
                                 .checked(section.is_staged())
-                                .on_click(move |_, _, cx| {
+                                .on_click(move |_, window, cx| {
                                     toggle_owner
-                                        .update(cx, |this, cx| this.toggle_staged_at(ix, cx))
+                                        .update(cx, |this, cx| {
+                                            this.toggle_staged_at(ix, window, cx)
+                                        })
                                         .ok();
                                 }),
                         )
@@ -549,16 +693,25 @@ impl Render for Workspace {
                 let ix = changes::step(&this.rows, this.selected, -1);
                 this.select(ix, cx);
             }))
-            .on_action(cx.listener(|this, _: &ToggleStaged, _, cx| {
+            .on_action(cx.listener(|this, _: &ToggleStaged, window, cx| {
                 if let Some(ix) = this.selected {
-                    this.toggle_staged_at(ix, cx);
+                    this.toggle_staged_at(ix, window, cx);
                 }
             }))
-            .on_action(cx.listener(|this, _: &StageAll, _, cx| {
-                this.run(|repo| repo.stage_all(), cx);
+            .on_action(cx.listener(|this, _: &StageAll, window, cx| {
+                this.run(|repo| repo.stage_all(), window, cx);
             }))
-            .on_action(cx.listener(|this, _: &UnstageAll, _, cx| {
-                this.run(|repo| repo.unstage_all(), cx);
+            .on_action(cx.listener(|this, _: &UnstageAll, window, cx| {
+                this.run(|repo| repo.unstage_all(), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Commit, window, cx| this.commit(window, cx)))
+            .on_action(cx.listener(|this, _: &FocusCommitMessage, window, cx| {
+                this.sidebar_visible = true;
+                this.commit_message
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx);
+                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &FocusDiff, window, cx| this.focus_diff(window, cx)))
             .on_action(cx.listener(|this, _: &FocusChanges, window, cx| {
