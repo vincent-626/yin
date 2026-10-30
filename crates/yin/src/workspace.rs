@@ -4,7 +4,7 @@ use std::time::Duration;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
     TitleBar, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonVariant, ButtonVariants as _},
     checkbox::Checkbox,
     diff::{Diff, DiffFile, DiffMode, DiffState},
     h_flex,
@@ -44,6 +44,7 @@ mod actions {
             FocusChanges,
             Commit,
             FocusCommitMessage,
+            Discard,
         ]
     );
 }
@@ -70,6 +71,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", FocusDiff, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-enter", Commit, Some("Workspace")),
         KeyBinding::new("c", FocusCommitMessage, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("cmd-backspace", Discard, Some(CHANGES_CONTEXT)),
     ]);
 }
 
@@ -415,6 +417,71 @@ impl Workspace {
         );
     }
 
+    /// Asks, then throws away the selected file's unstaged changes. Untracked
+    /// files go to the Trash so a mistake is recoverable.
+    fn discard_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self.selected_key() else {
+            return;
+        };
+        let untracked = match key.section {
+            Section::Changes => false,
+            Section::Untracked => true,
+            Section::Staged | Section::Conflicts => {
+                window.push_notification("Unstage the file before discarding it.", cx);
+                return;
+            }
+        };
+        let name = key.path.rsplit('/').next().unwrap_or(&key.path).to_owned();
+        let (title, description, ok) = if untracked {
+            (
+                format!("Move {name} to the Trash?"),
+                format!(
+                    "{} is untracked. You can restore it from the Trash.",
+                    key.path
+                ),
+                "Move to Trash",
+            )
+        } else {
+            (
+                format!("Discard changes to {name}?"),
+                format!(
+                    "Unstaged changes to {} will be lost. Staged changes are kept.",
+                    key.path
+                ),
+                "Discard",
+            )
+        };
+        let this = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let this = this.clone();
+            let key = key.clone();
+            alert
+                .title(title.clone())
+                .description(description.clone())
+                .confirm()
+                .ok_text(ok)
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    let key = key.clone();
+                    this.update(cx, |this, cx| {
+                        this.run(
+                            move |repo| {
+                                if untracked {
+                                    move_to_trash(&repo.workdir().join(&key.path))
+                                } else {
+                                    repo.discard(&[&key.path])
+                                }
+                            },
+                            window,
+                            cx,
+                        )
+                    })
+                    .ok();
+                    true
+                })
+        });
+    }
+
     fn focus_diff(&self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.diff.read(cx).files().is_empty() {
             self.diff.read(cx).focus_handle(cx).focus(window, cx);
@@ -574,6 +641,16 @@ impl Workspace {
             }
         })
     }
+}
+
+/// Uses NSFileManager rather than the crate's default of scripting Finder,
+/// which needs Automation permission.
+fn move_to_trash(path: &std::path::Path) -> anyhow::Result<()> {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos as _};
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(DeleteMethod::NsFileManager);
+    context.delete(path)?;
+    Ok(())
 }
 
 fn change_color(change: Change, cx: &App) -> Hsla {
@@ -742,6 +819,9 @@ impl Render for Workspace {
                 this.run(|repo| repo.unstage_all(), window, cx);
             }))
             .on_action(cx.listener(|this, _: &Commit, window, cx| this.commit(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &Discard, window, cx| this.discard_selected(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FocusCommitMessage, window, cx| {
                 this.sidebar_visible = true;
                 this.commit_message

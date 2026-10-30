@@ -11,6 +11,7 @@ yin_git.workspace = true
 async-channel = "2"
 ignore = "0.4"
 notify = "8"
+trash = "5"
 
 [dev-dependencies]
 tempfile = "3"

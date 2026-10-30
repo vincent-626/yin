@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Print the window number of the newest running yin, for `screencapture -l`.
+set -euo pipefail
+pid=$(pgrep -nx yin) || { echo "yin is not running" >&2; exit 1; }
+swift - "$pid" <<'SWIFT'
+import CoreGraphics
+let pid = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+    print(w[kCGWindowNumber as String]!); break
+}
+SWIFT

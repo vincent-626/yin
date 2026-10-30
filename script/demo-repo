@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Create a throwaway repo with staged, unstaged and untracked changes:
+#   script/demo-repo <dir>      (the directory is deleted first)
+set -euo pipefail
+dir=${1:?usage: script/demo-repo <dir>}
+rm -rf "$dir" && mkdir -p "$dir/src" && cd "$dir"
+git init -q -b main
+git config user.name Demo && git config user.email demo@example.com && git config commit.gpgsign false
+printf 'target/\n' > .gitignore
+printf 'fn main() {\n    println!("hello");\n}\n' > src/main.rs
+printf '# Demo\n\nA throwaway repository for testing yin.\n' > README.md
+printf 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n' > src/lib.rs
+git add -A && git commit -qm "Initial commit"
+printf 'fn main() {\n    let name = "yin";\n    println!("hello, {name}");\n}\n' > src/main.rs
+printf '# Demo\n\nA throwaway repository for testing yin.\n\n## Usage\n\nRun it.\n' > README.md
+git add README.md
+printf 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n' > src/lib.rs
+printf 'yin demo scratch file\n' > src/yin-demo-untracked.txt
+git status --short
