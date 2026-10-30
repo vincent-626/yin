@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
-# Move the mouse (and optionally click) at a point in the newest yin window,
-# in window points from its top-left: script/mouse <x> <y> [click]
+# Move, click or drag the mouse in the newest yin window, in window points
+# from its top-left:
+#   script/mouse <x> <y>                 move
+#   script/mouse <x> <y> click           click
+#   script/mouse <x> <y> drag <x2> <y2>  drag from one point to another
 set -euo pipefail
 pid=$(pgrep -nx yin) || { echo "yin is not running" >&2; exit 1; }
-swift - "$pid" "$1" "$2" "${3:-}" <<'SWIFT'
+swift - "$pid" "$1" "$2" "${3:-}" "${4:-0}" "${5:-0}" <<'SWIFT'
 import CoreGraphics
 import Foundation
 let args = CommandLine.arguments
-let pid = Int(args[1])!, x = Double(args[2])!, y = Double(args[3])!, click = args[4] == "click"
+let pid = Int(args[1])!, x = Double(args[2])!, y = Double(args[3])!, mode = args[4]
+let x2 = Double(args[5])!, y2 = Double(args[6])!
 let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
 guard let w = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }) else { exit(1) }
 let b = w[kCGWindowBounds as String] as! [String: Double]
-let point = CGPoint(x: b["X"]! + x, y: b["Y"]! + y)
-CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
-if click {
-    usleep(50_000)
-    CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
-    CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+func at(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: b["X"]! + x, y: b["Y"]! + y) }
+func post(_ type: CGEventType, _ point: CGPoint) {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+post(.mouseMoved, at(x, y))
+switch mode {
+case "click":
+    usleep(50_000); post(.leftMouseDown, at(x, y)); post(.leftMouseUp, at(x, y))
+case "drag":
+    usleep(50_000); post(.leftMouseDown, at(x, y))
+    for step in 1...20 {
+        let t = Double(step) / 20
+        usleep(15_000); post(.leftMouseDragged, at(x + (x2 - x) * t, y + (y2 - y) * t))
+    }
+    post(.leftMouseUp, at(x2, y2))
+default: break
 }
 SWIFT

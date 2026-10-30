@@ -69,4 +69,5 @@ notification at launch.
 ]
 ```
 
-Open tabs, the sidebar tab and the diff mode are restored per repository.
+Open tabs, the sidebar tab and width, and the diff mode are restored per
+repository; the window's size and position are restored too.

@@ -273,6 +273,9 @@ pub struct Workspace {
     open_files: Vec<files::OpenFile>,
     active_file: Option<usize>,
     file_pane_focus: FocusHandle,
+    panes: Entity<gpui_kit::component::resizable::ResizableState>,
+    /// Sidebar width in points, once dragged or restored.
+    sidebar_width: Option<f32>,
     _files_task: Task<()>,
     finder: Entity<CommandState>,
     finder_results: Vec<String>,
@@ -298,6 +301,18 @@ impl Workspace {
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
+        let panes = cx.new(|_| gpui_kit::component::resizable::ResizableState::default());
+        cx.subscribe(
+            &panes,
+            |this, panes, _: &gpui_kit::component::resizable::ResizablePanelEvent, cx| {
+                if this.sidebar_visible
+                    && let Some(width) = panes.read(cx).sizes().first()
+                {
+                    this.sidebar_width = Some((*width).into());
+                }
+            },
+        )
+        .detach();
         let all_diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&all_diff, |_, _, cx| cx.notify()).detach();
         let history_diff = cx.new(|cx| DiffState::new([], cx));
@@ -378,6 +393,8 @@ impl Workspace {
             open_files: Vec::new(),
             active_file: None,
             file_pane_focus: cx.focus_handle(),
+            panes,
+            sidebar_width: None,
             _files_task: Task::ready(()),
             finder: cx.new(|cx| CommandState::new(window, cx)),
             finder_results: Vec::new(),
@@ -505,6 +522,7 @@ impl Workspace {
             panel: self.panel.name().to_owned(),
             sidebar_hidden: !self.sidebar_visible,
             split_diff: self.diff_mode == DiffMode::Split,
+            sidebar_width: self.sidebar_width,
         };
         crate::state::save_session(self.repo.workdir(), &session);
     }
@@ -527,6 +545,7 @@ impl Workspace {
             self.diff
                 .update(cx, |diff, cx| diff.set_mode(DiffMode::Split, cx));
         }
+        self.sidebar_width = session.sidebar_width.filter(|width| *width >= 150.);
         let panel = Panel::from_name(&session.panel).unwrap_or(Panel::Changes);
         self.show_panel(panel, window, cx);
         self.sidebar_visible = !session.sidebar_hidden;
@@ -1492,10 +1511,11 @@ impl Render for Workspace {
             .child(
                 div().flex_1().min_h_0().child(
                     h_resizable("workspace-panes")
+                        .with_state(&self.panes)
                         .when(self.sidebar_visible, |this| {
                             this.child(
                                 resizable_panel()
-                                    .size(rem * 20.)
+                                    .size(self.sidebar_width.map_or(rem * 20., gpui_kit::px))
                                     .size_range(rem * 14. ..rem * 40.)
                                     .child(self.render_sidebar(window, cx)),
                             )

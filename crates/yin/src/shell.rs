@@ -50,6 +50,8 @@ pub struct Shell {
     workspace: Option<Entity<Workspace>>,
     focus: FocusHandle,
     _save_on_quit: gpui_kit::Subscription,
+    /// The window's frame, kept current to save on quit.
+    frame: Option<state::WindowFrame>,
 }
 
 /// The window's Shell, for app-level actions that need it.
@@ -92,9 +94,25 @@ impl Shell {
             // Every way out (menu, cmd-q, closing the window) ends here.
             _save_on_quit: cx.on_app_quit(|this, cx| {
                 this.save_session(cx);
+                if let Some(frame) = this.frame {
+                    state::save_window_frame(frame);
+                }
                 async {}
             }),
+            frame: None,
         };
+        cx.observe_window_bounds(window, |this, window, _| {
+            // Fullscreen and maximized frames aren't worth restoring as windows.
+            if let gpui_kit::WindowBounds::Windowed(bounds) = window.window_bounds() {
+                this.frame = Some(state::WindowFrame {
+                    x: bounds.origin.x.into(),
+                    y: bounds.origin.y.into(),
+                    width: bounds.size.width.into(),
+                    height: bounds.size.height.into(),
+                });
+            }
+        })
+        .detach();
         match repo {
             Some(repo) => this.open_repo(repo, window, cx),
             None => {

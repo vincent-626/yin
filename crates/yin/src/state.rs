@@ -19,6 +19,35 @@ pub struct Session {
     pub panel: String,
     pub sidebar_hidden: bool,
     pub split_diff: bool,
+    /// Sidebar width in points.
+    pub sidebar_width: Option<f32>,
+}
+
+/// The window's last position and size, in points.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WindowFrame {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+pub fn load_window_frame() -> Option<WindowFrame> {
+    let text = std::fs::read_to_string(state_dir()?.join("window.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn save_window_frame(frame: WindowFrame) {
+    let Some(dir) = state_dir() else { return };
+    let result = serde_json::to_string(&frame)
+        .map_err(std::io::Error::other)
+        .and_then(|json| {
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("window.json"), json)
+        });
+    if let Err(error) = result {
+        eprintln!("yin: couldn't save the window size: {error}");
+    }
 }
 
 fn session_file(workdir: &Path) -> Option<PathBuf> {
