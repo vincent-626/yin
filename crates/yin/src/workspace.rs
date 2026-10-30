@@ -219,7 +219,9 @@ pub struct Workspace {
     repo: Repository,
     status: Status,
     stashes: Vec<yin_git::Stash>,
-    merging: bool,
+    in_progress: Option<yin_git::InProgress>,
+    /// Git's prepared merge message, waiting to fill an empty commit box.
+    merge_message: Option<String>,
     reviews: crate::review::Reviews,
     review_hashes: std::collections::HashMap<String, u64>,
     reviewed: Arc<std::collections::HashSet<String>>,
@@ -343,7 +345,8 @@ impl Workspace {
             repo,
             status: Status::default(),
             stashes: Vec::new(),
-            merging: false,
+            in_progress: None,
+            merge_message: None,
             reviews,
             review_hashes: Default::default(),
             reviewed: Arc::default(),
@@ -563,9 +566,18 @@ impl Workspace {
             let result = cx
                 .background_spawn(async move {
                     let status = repo.status()?;
-                    let merging = repo.merge_in_progress()?;
+                    let in_progress = repo.in_progress()?;
+                    let merge_message = match in_progress {
+                        Some(yin_git::InProgress::Merge) => repo.merge_message()?,
+                        _ => None,
+                    };
                     let hashes = reviewing::hash_changed_files(repo.workdir(), &status);
-                    anyhow::Ok((status, repo.stashes()?, merging, hashes))
+                    anyhow::Ok((
+                        status,
+                        repo.stashes()?,
+                        (in_progress, merge_message),
+                        hashes,
+                    ))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -573,8 +585,12 @@ impl Workspace {
                     return;
                 }
                 match result {
-                    Ok((status, stashes, merging, hashes)) => {
-                        this.merging = merging;
+                    Ok((status, stashes, (in_progress, merge_message), hashes)) => {
+                        // Offer the message once per merge, not after every refresh.
+                        if in_progress != this.in_progress {
+                            this.merge_message = merge_message;
+                        }
+                        this.in_progress = in_progress;
                         this.install_review_hashes(hashes);
                         this.install_status(status, stashes, cx)
                     }
@@ -1355,6 +1371,13 @@ fn render_row(
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A merge stopped for conflicts: start from git's prepared message.
+        if let Some(message) = self.merge_message.take()
+            && self.commit_message.read(cx).value().trim().is_empty()
+        {
+            self.commit_message
+                .update(cx, |state, cx| state.set_value(message, window, cx));
+        }
         let rem = window.rem_size();
         let muted = cx.theme().muted_foreground;
         v_flex()

@@ -24,6 +24,26 @@ pub struct Repository {
     workdir: PathBuf,
 }
 
+/// An operation git stopped in the middle of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InProgress {
+    Merge,
+    Rebase,
+}
+
+/// Whether a failed pull means the branches diverged.
+pub fn is_diverged_error(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("not possible to fast-forward") || error.contains("diverg")
+}
+
+/// Whether a failed push was rejected because the remote moved.
+pub fn is_rejected_push(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("rejected")
+        && (error.contains("non-fast-forward") || error.contains("fetch first"))
+}
+
 /// Which side of the index a diff compares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DiffTarget {
@@ -453,8 +473,54 @@ impl Repository {
 
     /// Whether a merge is waiting for its conflicts to be resolved.
     pub fn merge_in_progress(&self) -> Result<bool> {
+        Ok(self.in_progress()? == Some(InProgress::Merge))
+    }
+
+    /// A merge or rebase that stopped part way, waiting for the user.
+    pub fn in_progress(&self) -> Result<Option<InProgress>> {
         let (git_dir, _) = self.git_dirs()?;
-        Ok(git_dir.join("MERGE_HEAD").exists())
+        Ok(
+            if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+                Some(InProgress::Rebase)
+            } else if git_dir.join("MERGE_HEAD").exists() {
+                Some(InProgress::Merge)
+            } else {
+                None
+            },
+        )
+    }
+
+    /// The message git prepared for the merge commit, without comment lines.
+    pub fn merge_message(&self) -> Result<Option<String>> {
+        let (git_dir, _) = self.git_dirs()?;
+        let Ok(text) = std::fs::read_to_string(git_dir.join("MERGE_MSG")) else {
+            return Ok(None);
+        };
+        let message: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+        let message = message.join("\n").trim().to_owned();
+        Ok((!message.is_empty()).then_some(message))
+    }
+
+    /// Rebases local commits onto the upstream, for a diverged branch.
+    pub fn pull_rebase(&self) -> Result<()> {
+        self.git(["pull", "--rebase"]).map(drop)
+    }
+
+    /// Pushes over a remote branch that moved, unless it moved again since
+    /// the last fetch.
+    pub fn push_force_with_lease(&self) -> Result<()> {
+        self.git(["push", "--force-with-lease"]).map(drop)
+    }
+
+    pub fn abort_rebase(&self) -> Result<()> {
+        self.git(["rebase", "--abort"]).map(drop)
+    }
+
+    /// Continues a rebase after conflicts are resolved and staged, keeping
+    /// each commit's message.
+    pub fn continue_rebase(&self) -> Result<()> {
+        self.git(["-c", "core.editor=true", "rebase", "--continue"])
+            .map(drop)
     }
 
     pub fn abort_merge(&self) -> Result<()> {

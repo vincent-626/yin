@@ -564,3 +564,96 @@ fn diff_all_combines_staged_unstaged_and_untracked() {
             .contains("+x")
     );
 }
+
+#[test]
+fn diverged_pull_rebases_and_rejected_push_forces_with_lease() {
+    let remote = tempfile::tempdir().unwrap();
+    Command::new("git")
+        .args(["init", "--quiet", "--bare", "--initial-branch=main"])
+        .current_dir(remote.path())
+        .status()
+        .unwrap();
+    let url = remote.path().to_str().unwrap();
+    let a = committed("a\n");
+    a.repo.git(["remote", "add", "origin", url]).unwrap();
+    a.repo.push(&a.repo.status().unwrap().branch).unwrap();
+
+    let b_dir = tempfile::tempdir().unwrap();
+    let b_path = b_dir.path().join("b");
+    Command::new("git")
+        .args(["clone", "--quiet", url])
+        .arg(&b_path)
+        .status()
+        .unwrap();
+    let b = Repository::open(&b_path).unwrap();
+    b.git(["config", "user.name", "B"]).unwrap();
+    b.git(["config", "user.email", "b@example.com"]).unwrap();
+    fs::write(b_path.join("other.txt"), "b\n").unwrap();
+    b.stage_all().unwrap();
+    b.commit("from b", false).unwrap();
+    b.push(&b.status().unwrap().branch).unwrap();
+
+    // A commits too: now the branches have diverged.
+    a.write("mine.txt", "a\n");
+    a.repo.stage_all().unwrap();
+    a.repo.commit("from a", false).unwrap();
+    let error = a.repo.pull().unwrap_err().to_string();
+    assert!(is_diverged_error(&error), "{error}");
+    a.repo.pull_rebase().unwrap();
+    let subjects: Vec<String> = a
+        .repo
+        .log(5)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.subject)
+        .collect();
+    assert_eq!(subjects[..2], ["from a".to_owned(), "from b".to_owned()]);
+
+    // B rewrites its last commit; its push is rejected until forced.
+    b.commit("from b, reworded", true).unwrap();
+    let error = b.push(&b.status().unwrap().branch).unwrap_err().to_string();
+    assert!(is_rejected_push(&error), "{error}");
+    b.push_force_with_lease().unwrap();
+}
+
+#[test]
+fn rebase_conflicts_can_be_continued_or_aborted_and_merges_keep_their_message() {
+    let fx = committed("base\n");
+    fx.repo.create_branch("topic").unwrap();
+    fx.write("f.txt", "topic\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("topic change", false).unwrap();
+    fx.repo.git(["switch", "main"]).unwrap();
+    fx.write("f.txt", "main\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("main change", false).unwrap();
+
+    assert!(fx.repo.git(["merge", "topic"]).is_err());
+    assert_eq!(fx.repo.in_progress().unwrap(), Some(InProgress::Merge));
+    assert!(
+        fx.repo
+            .merge_message()
+            .unwrap()
+            .unwrap()
+            .starts_with("Merge branch 'topic'")
+    );
+    fx.repo.abort_merge().unwrap();
+
+    fx.repo.git(["switch", "topic"]).unwrap();
+    assert!(fx.repo.git(["rebase", "main"]).is_err());
+    assert_eq!(fx.repo.in_progress().unwrap(), Some(InProgress::Rebase));
+    fx.repo.resolve_conflict("f.txt", "both\n").unwrap();
+    fx.repo.continue_rebase().unwrap();
+    assert_eq!(fx.repo.in_progress().unwrap(), None);
+    assert_eq!(fx.repo.head_message().unwrap(), "topic change");
+
+    fx.repo
+        .git(["reset", "--hard", "--quiet", "HEAD~2"])
+        .unwrap();
+    fx.write("f.txt", "again\n");
+    fx.repo.stage_all().unwrap();
+    fx.repo.commit("again", false).unwrap();
+    assert!(fx.repo.git(["rebase", "main"]).is_err());
+    fx.repo.abort_rebase().unwrap();
+    assert_eq!(fx.repo.in_progress().unwrap(), None);
+}

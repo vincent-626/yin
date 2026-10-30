@@ -7,7 +7,10 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _,
 };
+
+use yin_git::InProgress;
 
 use super::{FileKey, Section, Workspace};
 
@@ -102,9 +105,8 @@ impl Workspace {
     }
 
     pub(super) fn render_merge_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.merging {
-            return None;
-        }
+        let in_progress = self.in_progress?;
+        let rebasing = in_progress == InProgress::Rebase;
         Some(
             h_flex()
                 .flex_none()
@@ -115,33 +117,67 @@ impl Workspace {
                 .border_color(cx.theme().border)
                 .bg(cx.theme().warning.opacity(0.15))
                 .text_xs()
-                .child(div().flex_1().child("Merge in progress"))
+                .child(div().flex_1().child(if rebasing {
+                    "Rebase in progress"
+                } else {
+                    "Merge in progress"
+                }))
+                .when(rebasing, |this| {
+                    this.child(
+                        Button::new("continue-rebase")
+                            .xsmall()
+                            .primary()
+                            .label("Continue")
+                            .tooltip("Resolve and stage conflicts first")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.run(|repo| repo.continue_rebase(), window, cx)
+                            })),
+                    )
+                })
                 .child(
-                    Button::new("abort-merge")
+                    Button::new("abort-operation")
                         .xsmall()
                         .ghost()
                         .label("Abort")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.confirm_abort_merge(window, cx)),
-                        ),
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_abort(in_progress, window, cx)
+                        })),
                 )
                 .into_any_element(),
         )
     }
 
-    fn confirm_abort_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_abort(
+        &mut self,
+        in_progress: InProgress,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let this = cx.entity().downgrade();
+        let name = match in_progress {
+            InProgress::Merge => "merge",
+            InProgress::Rebase => "rebase",
+        };
         window.open_alert_dialog(cx, move |alert, _, _| {
             let this = this.clone();
             alert
-                .title("Abort the merge?")
-                .description("The working tree returns to how it was before the merge.")
+                .title(format!("Abort the {name}?"))
+                .description(format!(
+                    "The branch returns to how it was before the {name}."
+                ))
                 .confirm()
-                .ok_text("Abort merge")
+                .ok_text(format!("Abort {name}"))
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     this.update(cx, |this, cx| {
-                        this.run(|repo| repo.abort_merge(), window, cx)
+                        this.run(
+                            move |repo| match in_progress {
+                                InProgress::Merge => repo.abort_merge(),
+                                InProgress::Rebase => repo.abort_rebase(),
+                            },
+                            window,
+                            cx,
+                        )
                     })
                     .ok();
                     true

@@ -3,7 +3,7 @@
 
 use gpui_kit::component::{
     Disableable as _, IconName, Sizable as _, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonVariant, ButtonVariants as _},
     h_flex,
     notification::Notification,
 };
@@ -16,6 +16,10 @@ pub(super) enum RemoteOp {
     Fetch,
     Pull,
     Push,
+    /// Rebase local commits onto a diverged upstream.
+    PullRebase,
+    /// Push over a remote that moved, unless it moved again since fetch.
+    ForcePush,
 }
 
 impl RemoteOp {
@@ -25,7 +29,8 @@ impl RemoteOp {
             // The ahead/behind counts already show what fetch found.
             Self::Fetch => None,
             Self::Pull => Some(format!("Pulled from {upstream}")),
-            Self::Push => Some(format!("Pushed to {upstream}")),
+            Self::PullRebase => Some(format!("Rebased onto {upstream}")),
+            Self::Push | Self::ForcePush => Some(format!("Pushed to {upstream}")),
         }
     }
 }
@@ -46,6 +51,8 @@ impl Workspace {
                         RemoteOp::Fetch => repo.fetch(),
                         RemoteOp::Pull => repo.pull(),
                         RemoteOp::Push => repo.push(&branch),
+                        RemoteOp::PullRebase => repo.pull_rebase(),
+                        RemoteOp::ForcePush => repo.push_force_with_lease(),
                     }
                 })
                 .await;
@@ -61,12 +68,86 @@ impl Workspace {
                         }
                     }
                     Err(error) => {
-                        window.push_notification(Notification::error(error.to_string()), cx)
+                        let text = error.to_string();
+                        if op == RemoteOp::Pull && yin_git::is_diverged_error(&text) {
+                            this.offer_rebase(window, cx);
+                        } else if op == RemoteOp::Push && yin_git::is_rejected_push(&text) {
+                            this.offer_force_push(window, cx);
+                        } else {
+                            window.push_notification(Notification::error(text), cx)
+                        }
                     }
                 }
                 cx.notify();
             })
             .ok();
+        });
+    }
+
+    fn offer_rebase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let branch = &self.status.branch;
+        let description = format!(
+            "You have {} commit{} the remote doesn't, and it has {} you don't. \
+             Rebase yours on top of {}?",
+            branch.ahead,
+            if branch.ahead == 1 { "" } else { "s" },
+            branch.behind,
+            branch.upstream.as_deref().unwrap_or("the upstream"),
+        );
+        self.confirm_remote(
+            "Branches have diverged",
+            description,
+            "Rebase",
+            false,
+            RemoteOp::PullRebase,
+            window,
+            cx,
+        );
+    }
+
+    fn offer_force_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_remote(
+            "Push was rejected",
+            "The remote has commits your branch doesn't. Force pushing replaces them, \
+             unless the remote changed again since your last fetch."
+                .into(),
+            "Force push",
+            true,
+            RemoteOp::ForcePush,
+            window,
+            cx,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn confirm_remote(
+        &mut self,
+        title: &'static str,
+        description: String,
+        ok: &'static str,
+        danger: bool,
+        op: RemoteOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let this = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let this = this.clone();
+            let alert = alert
+                .title(title)
+                .description(description.clone())
+                .confirm()
+                .ok_text(ok);
+            let alert = if danger {
+                alert.ok_variant(ButtonVariant::Danger)
+            } else {
+                alert
+            };
+            alert.on_ok(move |_, window, cx| {
+                this.update(cx, |this, cx| this.run_remote(op, window, cx))
+                    .ok();
+                true
+            })
         });
     }
 
