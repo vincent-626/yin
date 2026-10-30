@@ -35,6 +35,9 @@ fn main() {
             let keymap_errors = keymap::load(cx);
             // Always yin: dark only, never follow the system appearance.
             Theme::change(ThemeMode::Dark, None, cx);
+            // The dark theme gives popovers the editor's own background, so
+            // hover cards and menus had no edge; lift them one step.
+            Theme::update(cx, |theme| theme.popover = hsla(0., 0., 0.09, 1.));
             let options = WindowOptions {
                 window_bounds: Some(initial_bounds(cx)),
                 app_id: Some("yin".into()),

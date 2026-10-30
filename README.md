@@ -48,7 +48,7 @@ For development: `cargo run -- /path/to/repo`, and optionally
 | File tree | arrows, `enter` | Move, open/close folders, open file |
 | Search results | `j` / `k`, `enter` | Move, open at the line |
 | File view | `cmd-s` | Save |
-| | `cmd-f` / `cmd-alt-f` | Find / replace in file |
+| | `cmd-f` / `cmd-alt-f` | Find / replace in file (the first character typed is sometimes lost; known component issue) |
 | | `ctrl-g` | Go to line (`line` or `line:column`) |
 | | `f12` / cmd-click | Go to definition |
 | | `shift-f12` | Find references |

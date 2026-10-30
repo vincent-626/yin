@@ -174,14 +174,26 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] `script/bundle` builds `yin.app`; `script/install` copies it to
   `~/Applications` and adds a `yin [path]` command in `~/.local/bin`.
 
-## Next
+## After the plan · status: done
+- [x] All-changes review view (`a`): every change against HEAD in one diff.
+- [x] Command palette (`cmd-shift-p`).
+- [x] Language server diagnostics: squiggles, red files and folders in the tree,
+  error and warning counts in the status bar.
+- [x] Sidebar width and window frame remembered.
+- [x] Diverged pull offers a rebase; rejected push offers force-with-lease;
+  rebase banner with Continue and Abort; merge commits start from git's message.
+- [x] Blame (`cmd-alt-b`) and file history (`cmd-alt-h`).
+- [x] Popovers get their own surface colour (the dark theme reused the editor's).
 
-All planned phases are done. Candidates, roughly by value:
-- Remember sidebar width and window size with the session.
-- Side-by-side "all changes" review: every changed file in one scrolling diff.
-- Diagnostics from language servers (errors in the gutter and the file tree).
-- Pull with rebase for diverged branches; force-push with lease behind a confirm.
-- Command palette listing every action and its key.
+## Known issues (upstream, gpui-component 0.8.1)
+- The first character typed right after `cmd-f` is lost. The find bar re-selects
+  its query when the search session and panel disagree (`input/overlay.rs`,
+  `query_echo`), which races the first keystroke. Forcing redraws doesn't help;
+  needs a fix in the component.
+- Hover cards draw each markdown code block's language label over the block's
+  first line.
+- Diff rows keep a stale width after the window grows (worked around in yin by
+  `schedule_relayout`).
 
 ## Risks
 
