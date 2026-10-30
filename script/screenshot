@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Launch yin on a repo, capture its window to a PNG, and quit.
+#   script/screenshot [out.png] [repo] [delay-seconds]
+# Needs Screen Recording permission for the terminal running it.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out=${1:-target/screenshot.png}
+repo=${2:-.}
+delay=${3:-3}
+
+cargo build --quiet
+./target/debug/yin "$repo" >target/screenshot.log 2>&1 &
+pid=$!
+trap 'kill $pid 2>/dev/null || true' EXIT
+sleep "$delay"
+
+id=$(swift - "$pid" <<'SWIFT'
+import CoreGraphics
+let pid = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+    print(w[kCGWindowNumber as String]!); break
+}
+SWIFT
+)
+[ -n "$id" ] || { echo "no yin window found" >&2; cat target/screenshot.log >&2; exit 1; }
+screencapture -x -o -l "$id" "$out"
+echo "$out"

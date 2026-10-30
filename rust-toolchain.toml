@@ -1,0 +1,5 @@
+[toolchain]
+# Matches Zed's toolchain: gpui-pre snapshots use features stabilized there.
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]

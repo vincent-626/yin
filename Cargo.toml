@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/yin", "crates/yin_git"]
+default-members = ["crates/yin"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+yin_git = { path = "crates/yin_git" }
+
+anyhow = "1"
+# GPUI Kit re-exports GPUI (the `gpui-pre` snapshot it was built against) plus
+# gpui-component. Pin exactly: GPUI snapshots break API between releases.
+gpui-kit = { version = "=0.8.1", features = [
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-markdown",
+    "tree-sitter-markdown-inline",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-python",
+    "tree-sitter-go",
+    "tree-sitter-bash",
+    "tree-sitter-yaml",
+    "tree-sitter-css",
+    "tree-sitter-html",
+] }
+
+# Dependencies are optimized so the dev build still feels like the real app.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

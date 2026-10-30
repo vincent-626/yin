@@ -1,0 +1,4 @@
+/target
+# Read-only reference checkouts (Zed, gpui-component). See docs/REFERENCES.md.
+/ref
+.DS_Store
