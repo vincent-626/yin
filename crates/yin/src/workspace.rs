@@ -35,6 +35,7 @@ mod files;
 mod finder;
 mod history;
 mod lsp;
+mod palette;
 mod remote;
 mod review_all;
 mod reviewing;
@@ -88,6 +89,7 @@ pub(crate) mod actions {
             ToggleHideReviewed,
             SwitchWorktree,
             ToggleReviewAll,
+            CommandPalette,
         ]
     );
 }
@@ -185,6 +187,7 @@ pub fn init(cx: &mut App) {
             Some("Input"),
         ),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
+        KeyBinding::new("cmd-shift-p", CommandPalette, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
         // The editor binds cmd-shift-f to replace; keep it for project search,
         // as Zed does, and move replace to cmd-alt-f.
@@ -283,6 +286,7 @@ pub struct Workspace {
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     worktree_picker: Entity<CommandState>,
+    palette: Entity<CommandState>,
     _remote_task: Task<()>,
     _relayout_task: Task<()>,
 }
@@ -389,6 +393,7 @@ impl Workspace {
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             worktree_picker: cx.new(|cx| CommandState::new(window, cx)),
+            palette: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
             _relayout_task: Task::ready(()),
         };
@@ -1404,6 +1409,9 @@ impl Render for Workspace {
             )
             .on_action(cx.listener(|this, _: &ToggleReviewed, _, cx| this.toggle_reviewed(cx)))
             .on_action(cx.listener(|this, _: &ToggleReviewAll, _, cx| this.toggle_review_all(cx)))
+            .on_action(
+                cx.listener(|this, _: &CommandPalette, window, cx| this.open_palette(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &SwitchWorktree, window, cx| {
                 this.open_worktree_picker(window, cx)
             }))

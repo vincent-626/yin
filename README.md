@@ -18,6 +18,7 @@ For development: `cargo run -- /path/to/repo`, and optionally
 |---|---|---|
 | Anywhere | `cmd-o` | Open a repository |
 | | `cmd-1` / `cmd-2` / `cmd-3` | Changes / History / Files |
+| | `cmd-shift-p` | Command palette: every action and its key |
 | | `cmd-p` | Go to file |
 | | `cmd-shift-f` | Search the project |
 | | `cmd-w` | Close file tab |
