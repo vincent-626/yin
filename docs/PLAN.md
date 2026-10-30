@@ -141,10 +141,16 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Project search (`cmd-shift-f`): smart-case literal or regex, grouped
   results, opens at the line.
 
-### Phase 4 — Light editing
-- Switch file view to the gpui-component code editor in edit mode.
-- Save (`cmd-s`), dirty markers, reload on external change when not dirty.
-- Find in file (`cmd-f`), go to line (`ctrl-g`).
+### Phase 4 — Light editing · status: done
+- [x] Files are editable in the gpui-component code editor; opening focuses it.
+- [x] Save (`cmd-s`), ● on unsaved tabs, markdown preview follows edits.
+- [x] Disk changes reload clean files; files with unsaved edits keep them and
+  show a Reload banner.
+- [x] Closing a tab, switching repository, quitting and closing the window ask
+  before discarding unsaved edits.
+- [x] Find in file (`cmd-f`, built into the editor), go to line (`ctrl-g`).
+- Known: the first character typed right after `cmd-f` is sometimes dropped
+  (gpui-component find bar).
 
 ### Phase 5 — Code intelligence
 - `yin_lsp`: spawn rust-analyzer / typescript-language-server per root.

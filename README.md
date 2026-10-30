@@ -39,4 +39,6 @@ cargo run -- /path/to/repo
 | History list | `j` / `k`, `enter` | Move, read the diff |
 | File tree | arrows, `enter` | Move, open/close folders, open file |
 | Search results | `j` / `k`, `enter` | Move, open at the line |
-| File view | `cmd-f` | Find in file |
+| File view | `cmd-s` | Save |
+| | `cmd-f` | Find in file |
+| | `ctrl-g` | Go to line (`line` or `line:column`) |
