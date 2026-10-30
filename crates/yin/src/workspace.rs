@@ -30,10 +30,11 @@ use crate::watcher::{self, RepoWatcher};
 
 mod branches;
 mod remote;
+mod staging;
 
 use remote::RemoteOp;
 
-mod actions {
+pub(crate) mod actions {
     gpui_kit::actions!(
         yin,
         [
@@ -54,6 +55,8 @@ mod actions {
             Pull,
             Push,
             SwitchBranch,
+            StageLines,
+            StageHunk,
         ]
     );
 }
@@ -84,6 +87,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("p", Pull, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-p", Push, Some(CHANGES_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(CHANGES_CONTEXT)),
+        KeyBinding::new("space", StageLines, Some("Diff")),
+        KeyBinding::new("s", StageHunk, Some("Diff")),
     ]);
 }
 
@@ -238,6 +243,20 @@ impl Workspace {
     #[cfg(test)]
     pub fn selected_path(&self) -> Option<String> {
         self.selected_key().map(|key| key.path)
+    }
+
+    #[cfg(test)]
+    pub fn select_path_in_staged(&mut self, path: &str, cx: &mut Context<Self>) {
+        let ix = self.rows.iter().position(|row| {
+            row.key()
+                .is_some_and(|key| key.section == Section::Staged && key.path == path)
+        });
+        self.select(ix, cx);
+    }
+
+    #[cfg(test)]
+    pub fn diff_state(&self) -> Entity<DiffState> {
+        self.diff.clone()
     }
 
     #[cfg(test)]
@@ -675,31 +694,44 @@ impl Workspace {
             )
     }
 
-    fn render_diff(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_diff(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let empty = self.diff.read(cx).files().is_empty();
-        div().size_full().min_w_0().min_h_0().map(|this| {
-            if empty {
-                this.child(
-                    v_flex()
-                        .size_full()
-                        .items_center()
-                        .justify_center()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if !self.loaded {
-                            "Reading status…"
-                        } else if self.rows.is_empty() {
-                            "Nothing to review"
-                        } else if self.selected.is_none() {
-                            "Select a file"
-                        } else {
-                            "No textual changes"
-                        }),
-                )
-            } else {
-                this.child(Diff::new(&self.diff).line_number(true))
-            }
-        })
+        let selection = self.diff.read(cx).selected_lines();
+        let selection_bar =
+            selection.and_then(|range| self.render_selection_bar(&range, window, cx));
+        v_flex()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .children(selection_bar)
+            .map(|this| {
+                if empty {
+                    this.child(
+                        v_flex()
+                            .size_full()
+                            .items_center()
+                            .justify_center()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(if !self.loaded {
+                                "Reading status…"
+                            } else if self.rows.is_empty() {
+                                "Nothing to review"
+                            } else if self.selected.is_none() {
+                                "Select a file"
+                            } else {
+                                "No textual changes"
+                            }),
+                    )
+                } else {
+                    this.child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(Diff::new(&self.diff).line_number(true)),
+                    )
+                }
+            })
     }
 }
 
@@ -886,6 +918,14 @@ impl Render for Workspace {
                     this.open_branch_picker(window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, _: &StageLines, window, cx| {
+                this.stage_selection(false, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &StageHunk, window, cx| {
+                    this.stage_selection(true, window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &Fetch, window, cx| {
                 this.run_remote(RemoteOp::Fetch, window, cx)
             }))
@@ -925,7 +965,7 @@ impl Render for Workspace {
                                     .child(self.render_changes(window, cx)),
                             )
                         })
-                        .child(resizable_panel().child(self.render_diff(cx))),
+                        .child(resizable_panel().child(self.render_diff(window, cx))),
                 ),
             )
             .child(

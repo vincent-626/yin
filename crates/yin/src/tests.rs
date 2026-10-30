@@ -11,7 +11,9 @@ use gpui_kit::{
 };
 use yin_git::Repository;
 
-use crate::workspace::{self, Workspace};
+use crate::workspace::{self, Workspace, actions};
+use gpui_kit::Action as _;
+use gpui_kit::component::diff::{DiffLineRange, DiffSide};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -121,4 +123,72 @@ fn commit_is_refused_without_staged_changes(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     assert_eq!(git(dir.path(), &["rev-list", "--count", "HEAD"]), "1\n");
+}
+
+fn numbered(range: std::ops::RangeInclusive<usize>) -> String {
+    range.map(|i| format!("line {i}\n")).collect()
+}
+
+#[gpui_kit::test]
+fn stages_then_unstages_selected_lines_from_the_diff(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(path, &["config", "user.name", "Yin Test"]);
+    git(path, &["config", "user.email", "yin@example.com"]);
+    std::fs::write(path.join("f.txt"), numbered(1..=20)).unwrap();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "initial"]);
+    let changed = numbered(1..=20)
+        .replace("line 2\n", "line two\n")
+        .replace("line 18\n", "line eighteen\n");
+    std::fs::write(path.join("f.txt"), &changed).unwrap();
+
+    let (window, workspace) = open(cx, Repository::open(path).unwrap());
+    cx.run_until_parked();
+    let select = |cx: &mut TestAppContext, side, line| {
+        cx.update(|cx| {
+            let diff = workspace.read(cx).diff_state();
+            diff.update(cx, |diff, cx| {
+                diff.set_selected_lines(Some(DiffLineRange::new("f.txt", side, line, line)), cx)
+            });
+        });
+    };
+    let dispatch = |cx: &mut TestAppContext, action: Box<dyn gpui_kit::Action>| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    // Stage only the added "line eighteen".
+    select(cx, DiffSide::Modified, 18);
+    dispatch(cx, actions::StageLines.boxed_clone());
+    let staged = git(path, &["diff", "--cached"]);
+    assert!(
+        staged.contains("+line eighteen") && !staged.contains("line two"),
+        "{staged}"
+    );
+    assert!(
+        !staged.contains("-line 18"),
+        "only the addition was selected: {staged}"
+    );
+
+    // Select the Staged entry, then unstage that hunk.
+    cx.update(|cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.select_path_in_staged("f.txt", cx)
+        })
+    });
+    cx.run_until_parked();
+    select(cx, DiffSide::Modified, 18);
+    dispatch(cx, actions::StageHunk.boxed_clone());
+    assert_eq!(git(path, &["diff", "--cached"]), "");
+    // The working tree never changes.
+    assert_eq!(
+        std::fs::read_to_string(path.join("f.txt")).unwrap(),
+        changed
+    );
 }
