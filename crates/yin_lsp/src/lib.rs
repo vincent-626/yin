@@ -17,7 +17,7 @@ use lsp_types::request::Request;
 use serde_json::{Value, json};
 
 pub use lsp_types;
-pub use paths::{find_executable, path_to_uri, uri_to_path};
+pub use paths::{find_executable, find_working_executable, path_to_uri, uri_to_path};
 
 type Pending = Arc<Mutex<HashMap<i64, async_channel::Sender<Result<Value>>>>>;
 
@@ -30,6 +30,7 @@ pub struct LanguageServer {
     pending: Pending,
     versions: Mutex<HashMap<String, AtomicI32>>,
     capabilities: OnceLock<lsp_types::ServerCapabilities>,
+    diagnostics: async_channel::Receiver<lsp_types::PublishDiagnosticsParams>,
 }
 
 fn write_frame(stdin: &mut impl std::io::Write, message: &Value) -> Result<()> {
@@ -89,6 +90,7 @@ impl LanguageServer {
         let stdout = child.stdout.take().expect("piped stdout");
         let pending: Pending = Arc::default();
         let (replies_tx, replies_rx) = std::sync::mpsc::channel::<Value>();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
 
         std::thread::Builder::new()
             .name(format!("lsp-{name}"))
@@ -115,8 +117,12 @@ impl LanguageServer {
                             sender.try_send(result).ok();
                         } else if message.get("id").is_some() {
                             replies_tx.send(reply_to_server(&message)).ok();
+                        } else if message["method"] == "textDocument/publishDiagnostics"
+                            && let Ok(params) = serde_json::from_value(message["params"].clone())
+                        {
+                            diagnostics_tx.try_send(params).ok();
                         }
-                        // Notifications (diagnostics, progress, logs) are not used yet.
+                        // Other notifications (progress, logs) are not used.
                     }
                     // The server exited: fail everything still waiting.
                     for (_, sender) in pending.lock().expect("pending").drain() {
@@ -133,6 +139,7 @@ impl LanguageServer {
             pending,
             versions: Mutex::default(),
             capabilities: OnceLock::new(),
+            diagnostics: diagnostics_rx,
         });
         // Replies to server requests go through the same writer.
         std::thread::spawn({
@@ -170,6 +177,23 @@ impl LanguageServer {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Diagnostics as the server publishes them, one file per message.
+    pub fn diagnostics(&self) -> async_channel::Receiver<lsp_types::PublishDiagnosticsParams> {
+        self.diagnostics.clone()
+    }
+
+    /// Tells the server a file was saved; some re-check on save.
+    pub fn did_save(&self, path: &Path) -> Result<()> {
+        self.notify::<lsp_types::notification::DidSaveTextDocument>(
+            lsp_types::DidSaveTextDocumentParams {
+                text_document: lsp_types::TextDocumentIdentifier {
+                    uri: path_to_uri(path)?,
+                },
+                text: None,
+            },
+        )
     }
 
     pub fn capabilities(&self) -> Option<&lsp_types::ServerCapabilities> {
@@ -305,7 +329,11 @@ fn client_capabilities() -> lsp_types::ClientCapabilities {
     use lsp_types::*;
     ClientCapabilities {
         text_document: Some(TextDocumentClientCapabilities {
-            synchronization: Some(TextDocumentSyncClientCapabilities::default()),
+            synchronization: Some(TextDocumentSyncClientCapabilities {
+                did_save: Some(true),
+                ..Default::default()
+            }),
+            publish_diagnostics: Some(PublishDiagnosticsClientCapabilities::default()),
             hover: Some(HoverClientCapabilities {
                 content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                 ..Default::default()

@@ -283,6 +283,7 @@ pub struct Workspace {
     _search_task: Task<()>,
     goto_input: Entity<gpui_kit::component::input::InputState>,
     servers: lsp::Servers,
+    diagnostics: lsp::Diagnostics,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     worktree_picker: Entity<CommandState>,
@@ -386,6 +387,7 @@ impl Workspace {
             search_scroll: UniformListScrollHandle::new(),
             _search_task: Task::ready(()),
             servers: Default::default(),
+            diagnostics: Default::default(),
             goto_input: cx.new(|cx| {
                 gpui_kit::component::input::InputState::new(window, cx)
                     .placeholder("Line, or line:column")
@@ -1522,7 +1524,35 @@ impl Render for Workspace {
                                 .truncate()
                                 .child(error),
                         )
-                    }),
+                    })
+                    .when(
+                        self.diagnostics.errors + self.diagnostics.warnings > 0,
+                        |this| {
+                            let (errors, warnings) =
+                                (self.diagnostics.errors, self.diagnostics.warnings);
+                            this.right(
+                                h_flex()
+                                    .gap_2()
+                                    .text_xs()
+                                    .child(
+                                        div()
+                                            .text_color(if errors > 0 {
+                                                cx.theme().red
+                                            } else {
+                                                muted
+                                            })
+                                            .child(format!(
+                                                "{errors} error{}",
+                                                if errors == 1 { "" } else { "s" }
+                                            )),
+                                    )
+                                    .child(div().text_color(muted).child(format!(
+                                        "{warnings} warning{}",
+                                        if warnings == 1 { "" } else { "s" }
+                                    ))),
+                            )
+                        },
+                    ),
             )
     }
 }

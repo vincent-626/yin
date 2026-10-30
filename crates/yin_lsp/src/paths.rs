@@ -64,6 +64,36 @@ fn login_path() -> &'static str {
     })
 }
 
+/// An executable named `name` that actually runs in `root`. Rustup proxies
+/// (`~/.cargo/bin/rust-analyzer`) fail when the project's toolchain lacks the
+/// component, so real binaries inside installed toolchains are tried too.
+pub fn find_working_executable(name: &str, root: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = find_executable(name).into_iter().collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        let toolchains = PathBuf::from(home).join(".rustup/toolchains");
+        if let Ok(entries) = std::fs::read_dir(toolchains) {
+            let mut found: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path().join("bin").join(name))
+                .filter(|path| path.is_file())
+                .collect();
+            // Newest toolchain names sort last.
+            found.sort();
+            candidates.extend(found.into_iter().rev());
+        }
+    }
+    candidates.into_iter().find(|candidate| {
+        std::process::Command::new(candidate)
+            .arg("--version")
+            .current_dir(root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
 pub fn find_executable(name: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let fallbacks = [

@@ -28,6 +28,61 @@ pub(super) enum ServerSlot {
 #[derive(Default)]
 pub(super) struct Servers {
     by_name: HashMap<&'static str, ServerSlot>,
+    /// Receives each server's published diagnostics.
+    listeners: Vec<Task<()>>,
+}
+
+/// Diagnostics by repository-relative path, and which files and folders
+/// have errors (for the tree).
+#[derive(Default)]
+pub(super) struct Diagnostics {
+    by_path: HashMap<String, Vec<lsp_types::Diagnostic>>,
+    pub(super) error_files: std::collections::HashSet<String>,
+    pub(super) error_dirs: std::collections::HashSet<String>,
+    pub(super) errors: usize,
+    pub(super) warnings: usize,
+}
+
+impl Diagnostics {
+    fn set(&mut self, path: String, diagnostics: Vec<lsp_types::Diagnostic>) {
+        if diagnostics.is_empty() {
+            self.by_path.remove(&path);
+        } else {
+            self.by_path.insert(path, diagnostics);
+        }
+        self.recount();
+    }
+
+    fn recount(&mut self) {
+        use lsp_types::DiagnosticSeverity as Severity;
+        self.error_files.clear();
+        self.error_dirs.clear();
+        self.errors = 0;
+        self.warnings = 0;
+        for (path, diagnostics) in &self.by_path {
+            let errors = diagnostics
+                .iter()
+                .filter(|d| d.severity.is_none_or(|s| s == Severity::ERROR))
+                .count();
+            self.errors += errors;
+            self.warnings += diagnostics
+                .iter()
+                .filter(|d| d.severity == Some(Severity::WARNING))
+                .count();
+            if errors > 0 {
+                self.error_files.insert(path.clone());
+                let mut dir = path.as_str();
+                while let Some((parent, _)) = dir.rsplit_once('/') {
+                    self.error_dirs.insert(parent.to_owned());
+                    dir = parent;
+                }
+            }
+        }
+    }
+
+    pub(super) fn for_path(&self, path: &str) -> Option<&Vec<lsp_types::Diagnostic>> {
+        self.by_path.get(path)
+    }
 }
 
 /// Answers the editor's definition and hover requests for one file.
@@ -141,9 +196,17 @@ impl Workspace {
                 cx.spawn_in(window, async move |this, cx| {
                     let started = cx
                         .background_spawn(async move {
-                            let command = yin_lsp::find_executable(name).ok_or_else(|| {
-                                anyhow::anyhow!("{name} isn't installed, so definitions and hover are off for {language}")
-                            })?;
+                            let command = yin_lsp::find_working_executable(name, &root)
+                                .ok_or_else(|| {
+                                    let hint = if name == "rust-analyzer" {
+                                        " (rustup component add rust-analyzer)"
+                                    } else {
+                                        ""
+                                    };
+                                    anyhow::anyhow!(
+                                        "{name} isn't installed{hint}, so code navigation is off for {language}"
+                                    )
+                                })?;
                             LanguageServer::start(name, &command, args, &root)
                         })
                         .await;
@@ -152,6 +215,7 @@ impl Workspace {
                             this.servers
                                 .by_name
                                 .insert(name, ServerSlot::Running(server.clone()));
+                            this.listen_for_diagnostics(&server, cx);
                             this.connect_open_files(&server, language, window, cx);
                         }
                         Err(error) => {
@@ -163,6 +227,65 @@ impl Workspace {
                 })
                 .detach();
             }
+        }
+    }
+
+    fn listen_for_diagnostics(&mut self, server: &Arc<LanguageServer>, cx: &mut Context<Self>) {
+        let published = server.diagnostics();
+        let root = self
+            .repo
+            .workdir()
+            .canonicalize()
+            .unwrap_or_else(|_| self.repo.workdir().to_owned());
+        self.servers.listeners.push(cx.spawn(async move |this, cx| {
+            while let Ok(params) = published.recv().await {
+                let Some(full) = yin_lsp::uri_to_path(&params.uri) else {
+                    continue;
+                };
+                // Diagnostics for files outside the repository aren't shown.
+                let Ok(relative) = full.strip_prefix(&root) else {
+                    continue;
+                };
+                let path = relative.to_string_lossy().into_owned();
+                let updated = this.update(cx, |this, cx| {
+                    this.diagnostics.set(path.clone(), params.diagnostics);
+                    this.show_diagnostics(&path, cx);
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Puts a file's diagnostics in its editor, if it is open.
+    pub(super) fn show_diagnostics(&self, path: &str, cx: &mut Context<Self>) {
+        let Some((_, editor)) = self
+            .open_files
+            .iter()
+            .find(|file| file.path == path)
+            .and_then(|file| file.editor())
+        else {
+            return;
+        };
+        let diagnostics = self.diagnostics.for_path(path).cloned().unwrap_or_default();
+        editor.update(cx, |editor, cx| {
+            if let Some(set) = editor.diagnostics_mut() {
+                set.clear();
+                set.extend(diagnostics);
+            }
+            cx.notify();
+        });
+    }
+
+    /// Lets the server re-check after a save.
+    pub(super) fn notify_saved(&self, path: &str) {
+        let language = super::files::language_for(path);
+        if let Some((name, _)) = yin_lsp::server_for(language)
+            && let Some(ServerSlot::Running(server)) = self.servers.by_name.get(name)
+        {
+            server.did_save(&self.full_path(path)).ok();
         }
     }
 
@@ -215,6 +338,7 @@ impl Workspace {
             lsp.hover_provider = Some(provider);
             lsp.show_document = Some(show_document_handler(workspace, full));
         });
+        self.show_diagnostics(path, cx);
     }
 
     /// Sends an edited file's text to its server.

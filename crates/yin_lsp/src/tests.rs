@@ -96,3 +96,41 @@ fn rust_analyzer_finds_a_definition() {
         std::thread::sleep(Duration::from_millis(500));
     }
 }
+
+/// `cargo test -p yin_lsp rust_analyzer_publishes -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn rust_analyzer_publishes_diagnostics() {
+    let Some(command) = find_executable("rust-analyzer") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::create_dir(root.join("src")).unwrap();
+    let main = root.join("src/main.rs");
+    let text = "fn main() {\n    let count: u32 = \"three\";\n}\n";
+    fs::write(&main, text).unwrap();
+    let server = LanguageServer::start("rust-analyzer", &command, &[], &root).unwrap();
+    server.sync_document(&main, "rust", text).unwrap();
+    let published = server.diagnostics();
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(!remaining.is_zero(), "no diagnostics before the deadline");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let receiver = published.clone();
+        std::thread::spawn(move || tx.send(receiver.recv_blocking()).ok());
+        let Ok(Ok(params)) = rx.recv_timeout(remaining) else {
+            continue;
+        };
+        eprintln!("{} -> {}", params.uri.as_str(), params.diagnostics.len());
+        if !params.diagnostics.is_empty() {
+            break;
+        }
+    }
+}

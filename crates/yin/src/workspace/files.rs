@@ -432,6 +432,7 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(()) => {
+                        this.notify_saved(&path);
                         if let Some(file) = this.open_files.iter_mut().find(|f| f.path == path)
                             && let FileContent::Text { text, editor, .. } = &mut file.content
                         {
@@ -667,6 +668,9 @@ impl Workspace {
         };
         let muted = cx.theme().muted_foreground;
         let dir_color = cx.theme().yellow.opacity(0.75);
+        let error_color = cx.theme().red;
+        let error_files = Arc::new(self.diagnostics.error_files.clone());
+        let error_dirs = Arc::new(self.diagnostics.error_dirs.clone());
         div()
             .id("file-tree")
             .key_context(FILES_CONTEXT)
@@ -682,7 +686,14 @@ impl Workspace {
                         } else {
                             IconName::FolderClosed
                         };
-                        (icon, decorations.dirs.contains(&path).then_some(dir_color))
+                        let tint = if error_dirs.contains(&path) {
+                            Some(error_color)
+                        } else {
+                            decorations.dirs.contains(&path).then_some(dir_color)
+                        };
+                        (icon, tint)
+                    } else if error_files.contains(&path) {
+                        (IconName::File, Some(error_color))
                     } else {
                         (
                             IconName::File,

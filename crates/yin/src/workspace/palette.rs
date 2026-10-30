@@ -8,8 +8,11 @@ use gpui_kit::{Action, px};
 
 use super::*;
 
+/// Builds an action; a fresh one per use, since actions are boxed values.
+type MakeAction = fn() -> Box<dyn Action>;
+
 /// Each entry's label and a constructor for its action.
-fn commands() -> Vec<(&'static str, fn() -> Box<dyn Action>)> {
+fn commands() -> Vec<(&'static str, MakeAction)> {
     vec![
         ("Commit", || Box::new(Commit)),
         ("Write commit message", || Box::new(FocusCommitMessage)),
