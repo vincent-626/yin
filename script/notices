@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Write the third-party licence notices bundled with yin.app:
+#   script/notices [out]     (default: target/THIRD_PARTY_LICENSES.txt)
+# Needs cargo-about: cargo install cargo-about --version 0.9.3 --locked --features cli
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out=${1:-target/THIRD_PARTY_LICENSES.txt}
+mkdir -p "$(dirname "$out")"
+cargo about generate --manifest-path crates/yin/Cargo.toml --fail about.hbs > "$out"
+
+# The bundled Lucide icons carry their own ISC licence inside gpui-kit-assets,
+# whose package licence (Apache-2.0) is all cargo-about sees.
+assets=$(cargo metadata --format-version 1 --filter-platform aarch64-apple-darwin \
+  | python3 -c "import json,sys; print(next(p['manifest_path'] for p in json.load(sys.stdin)['packages'] if p['name']=='gpui-kit-assets'))")
+lucide="$(dirname "$assets")/LICENSE-LUCIDE"
+{
+  printf '\n--------------------------------------------------------------------------------\n'
+  printf 'ISC License (Lucide icons)\nUsed by: the icons embedded through gpui-kit-assets\n'
+  printf -- '--------------------------------------------------------------------------------\n\n'
+  cat "$lucide"
+} >> "$out"
+echo "$out"

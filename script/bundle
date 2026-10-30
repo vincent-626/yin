@@ -9,6 +9,17 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/yin "$app/Contents/MacOS/yin"
 cp assets/yin.icns "$app/Contents/Resources/yin.icns"
+cp LICENSE "$app/Contents/Resources/LICENSE"
+# Redistributed builds must carry the notices of what is compiled in;
+# releases set YIN_REQUIRE_NOTICES=1. A local build can do without.
+if command -v cargo-about >/dev/null; then
+  script/notices "$app/Contents/Resources/THIRD_PARTY_LICENSES.txt" >/dev/null
+elif [ "${YIN_REQUIRE_NOTICES:-}" = 1 ]; then
+  echo "cargo-about is required for release builds" >&2
+  exit 1
+else
+  echo "warning: cargo-about not installed; skipping third-party notices" >&2
+fi
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

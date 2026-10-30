@@ -1,0 +1,15 @@
+Third-party software in yin
+===========================
+
+yin.app includes the following open source software. Each licence is listed
+once, followed by its text, with the packages it covers. The source of every
+package is published at https://crates.io/crates/<name>/<version>.
+{{#each licenses}}
+
+--------------------------------------------------------------------------------
+{{{name}}}
+Used by: {{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}
+--------------------------------------------------------------------------------
+
+{{{text}}}
+{{/each}}

@@ -31,7 +31,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Install cargo-about
+        run: command -v cargo-about || cargo install cargo-about --version 0.9.3 --locked --features cli
+
       - name: Build yin.app
+        env:
+          YIN_REQUIRE_NOTICES: "1"
         run: script/bundle
 
       - name: Package
@@ -40,6 +45,7 @@ jobs:
           cd target/release/bundle
           ditto -c -k --keepParent yin.app yin-macos-arm64.zip
           shasum -a 256 yin-macos-arm64.zip > yin-macos-arm64.zip.sha256
+          cp yin.app/Contents/Resources/THIRD_PARTY_LICENSES.txt .
 
       - name: Publish the release
         env:
@@ -49,4 +55,5 @@ jobs:
             --title "yin ${GITHUB_REF_NAME}" \
             --generate-notes \
             target/release/bundle/yin-macos-arm64.zip \
-            target/release/bundle/yin-macos-arm64.zip.sha256
+            target/release/bundle/yin-macos-arm64.zip.sha256 \
+            target/release/bundle/THIRD_PARTY_LICENSES.txt
