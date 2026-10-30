@@ -182,7 +182,6 @@ All planned phases are done. Candidates, roughly by value:
 - Diagnostics from language servers (errors in the gutter and the file tree).
 - Pull with rebase for diverged branches; force-push with lease behind a confirm.
 - Command palette listing every action and its key.
-- An app icon.
 
 ## Risks
 

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Render the app icon to assets/icon.png (1024 px) and assets/yin.icns.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+swift - assets/icon.png <<'SWIFT'
+import AppKit
+import CoreGraphics
+
+let size: CGFloat = 1024
+let out = CommandLine.arguments[1]
+let space = CGColorSpace(name: CGColorSpace.displayP3)!
+let ctx = CGContext(data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8,
+                    bytesPerRow: 0, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor {
+    CGColor(colorSpace: space, components: [r / 255, g / 255, b / 255, a])!
+}
+
+// macOS icon grid: an 824 pt rounded square centred on the 1024 canvas.
+let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
+let tilePath = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
+
+// Soft drop shadow under the tile.
+ctx.saveGState()
+ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: rgb(0, 0, 0, 0.45))
+ctx.addPath(tilePath); ctx.setFillColor(rgb(12, 12, 14)); ctx.fillPath()
+ctx.restoreGState()
+
+// Tile: near-black, a touch lighter at the top.
+ctx.saveGState()
+ctx.addPath(tilePath); ctx.clip()
+let tileGradient = CGGradient(colorsSpace: space,
+    colors: [rgb(30, 30, 34), rgb(10, 10, 12)] as CFArray, locations: [0, 1])!
+ctx.drawLinearGradient(tileGradient, start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 100), options: [])
+// A faint glow behind the symbol.
+let glow = CGGradient(colorsSpace: space,
+    colors: [rgb(120, 220, 160, 0.10), rgb(120, 220, 160, 0)] as CFArray, locations: [0, 1])!
+ctx.drawRadialGradient(glow, startCenter: CGPoint(x: 512, y: 512), startRadius: 0,
+                       endCenter: CGPoint(x: 512, y: 512), endRadius: 420, options: [])
+ctx.restoreGState()
+
+// Hairline edge so the tile reads on dark Docks.
+ctx.addPath(tilePath); ctx.setStrokeColor(rgb(255, 255, 255, 0.08)); ctx.setLineWidth(3); ctx.strokePath()
+
+// Yin-yang. Centre c, radius r; the light half is the right-hand side.
+let c = CGPoint(x: 512, y: 512)
+let r: CGFloat = 268
+let half = r / 2
+
+let light = CGMutablePath()
+light.addArc(center: c, radius: r, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
+light.addArc(center: CGPoint(x: c.x, y: c.y - half), radius: half, startAngle: -.pi / 2, endAngle: .pi / 2, clockwise: true)
+light.addArc(center: CGPoint(x: c.x, y: c.y + half), radius: half, startAngle: -.pi / 2, endAngle: .pi / 2, clockwise: false)
+light.closeSubpath()
+
+ctx.saveGState()
+ctx.addPath(light); ctx.clip()
+let lightGradient = CGGradient(colorsSpace: space,
+    colors: [rgb(244, 242, 238), rgb(184, 180, 174)] as CFArray, locations: [0, 1])!
+ctx.drawLinearGradient(lightGradient, start: CGPoint(x: 512, y: c.y + r), end: CGPoint(x: 512, y: c.y - r), options: [])
+ctx.restoreGState()
+
+// Outline of the whole circle, faint, so the dark half has a shape.
+ctx.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+ctx.setStrokeColor(rgb(255, 255, 255, 0.16)); ctx.setLineWidth(5); ctx.strokePath()
+
+// Dots: a dark one in the light half, a diff-green one (with glow) in the dark half.
+let dot: CGFloat = 40
+ctx.setFillColor(rgb(16, 16, 18))
+ctx.fillEllipse(in: CGRect(x: c.x - dot, y: c.y - half - dot, width: dot * 2, height: dot * 2))
+ctx.saveGState()
+ctx.setShadow(offset: .zero, blur: 36, color: rgb(74, 222, 128, 0.85))
+ctx.setFillColor(rgb(74, 222, 128))
+ctx.fillEllipse(in: CGRect(x: c.x - dot, y: c.y + half - dot, width: dot * 2, height: dot * 2))
+ctx.restoreGState()
+
+let image = ctx.makeImage()!
+let rep = NSBitmapImageRep(cgImage: image)
+try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+SWIFT
+
+iconset=$(mktemp -d)/yin.iconset
+mkdir -p "$iconset"
+for px in 16 32 128 256 512; do
+  sips -z $px $px assets/icon.png --out "$iconset/icon_${px}x${px}.png" >/dev/null
+  sips -z $((px * 2)) $((px * 2)) assets/icon.png --out "$iconset/icon_${px}x${px}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o assets/yin.icns
+echo assets/yin.icns
