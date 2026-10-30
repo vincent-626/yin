@@ -27,7 +27,19 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    // Quit can arrive with focus outside the Shell (an overlay, the menu bar):
+    // route it to the Shell so unsaved edits are still checked.
+    cx.on_action(|_: &Quit, cx| {
+        let Some(ShellHandle(shell, window)) = cx.try_global::<ShellHandle>().cloned() else {
+            return cx.quit();
+        };
+        let routed = window.update(cx, |_, window, cx| {
+            shell.update(cx, |shell, cx| shell.quit(window, cx)).is_ok()
+        });
+        if !matches!(routed, Ok(true)) {
+            cx.quit();
+        }
+    });
     cx.set_menus([
         Menu::new("yin").items([MenuItem::action("Quit yin", Quit)]),
         Menu::new("File").items([MenuItem::action("Open Repository…", Open)]),
@@ -37,17 +49,38 @@ pub fn init(cx: &mut App) {
 pub struct Shell {
     workspace: Option<Entity<Workspace>>,
     focus: FocusHandle,
+    _save_on_quit: gpui_kit::Subscription,
 }
 
+/// The window's Shell, for app-level actions that need it.
+#[derive(Clone)]
+struct ShellHandle(gpui_kit::WeakEntity<Shell>, gpui_kit::AnyWindowHandle);
+
+impl gpui_kit::Global for ShellHandle {}
+
 impl Shell {
-    pub fn new(repo: Option<Repository>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        repo: Option<Repository>,
+        keymap_errors: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        if !keymap_errors.is_empty() {
+            let message = format!("Keymap problems:\n{}", keymap_errors.join("\n"));
+            window.defer(cx, move |window, cx| {
+                window.push_notification(Notification::warning(message), cx)
+            });
+        }
         let focus = cx.focus_handle();
+        let handle = ShellHandle(cx.entity().downgrade(), window.window_handle());
+        cx.set_global(handle);
         let shell = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let unsaved = shell
                 .read_with(cx, |shell, cx| shell.unsaved_files(cx))
                 .unwrap_or_default();
             if unsaved.is_empty() {
+                shell.update(cx, |shell, cx| shell.save_session(cx)).ok();
                 return true;
             }
             confirm_discard(unsaved, window, cx, |_, cx| cx.quit());
@@ -56,6 +89,11 @@ impl Shell {
         let mut this = Self {
             workspace: None,
             focus,
+            // Every way out (menu, cmd-q, closing the window) ends here.
+            _save_on_quit: cx.on_app_quit(|this, cx| {
+                this.save_session(cx);
+                async {}
+            }),
         };
         match repo {
             Some(repo) => this.open_repo(repo, window, cx),
@@ -74,7 +112,14 @@ impl Shell {
             .unwrap_or_default()
     }
 
+    fn save_session(&self, cx: &mut App) {
+        if let Some(workspace) = &self.workspace {
+            workspace.read(cx).save_session(cx);
+        }
+    }
+
     fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_session(cx);
         let unsaved = self.unsaved_files(cx);
         if unsaved.is_empty() {
             cx.quit();
@@ -84,6 +129,7 @@ impl Shell {
     }
 
     fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_session(cx);
         state::save_last_repo(repo.workdir());
         let workspace = cx.new(|cx| Workspace::new(repo, window, cx));
         cx.subscribe_in(

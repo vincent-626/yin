@@ -106,6 +106,19 @@ enum Panel {
 }
 
 impl Panel {
+    fn name(self) -> &'static str {
+        match self {
+            Panel::Changes => "changes",
+            Panel::History => "history",
+            Panel::Files => "files",
+            Panel::Search => "search",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|panel| panel.name() == name)
+    }
+
     const ALL: [Panel; 4] = [Panel::Changes, Panel::History, Panel::Files, Panel::Search];
 
     fn index(self) -> usize {
@@ -170,6 +183,14 @@ pub fn init(cx: &mut App) {
         ),
         KeyBinding::new("cmd-p", FindFile, Some("Workspace")),
         KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Workspace")),
+        // The editor binds cmd-shift-f to replace; keep it for project search,
+        // as Zed does, and move replace to cmd-alt-f.
+        KeyBinding::new("cmd-shift-f", ProjectSearch, Some("Input")),
+        KeyBinding::new(
+            "cmd-alt-f",
+            gpui_kit::component::input::Replace,
+            Some("Input"),
+        ),
         KeyBinding::new("down", SelectNext, Some(SEARCH_CONTEXT)),
         KeyBinding::new("j", SelectNext, Some(SEARCH_CONTEXT)),
         KeyBinding::new("up", SelectPrevious, Some(SEARCH_CONTEXT)),
@@ -240,6 +261,7 @@ pub struct Workspace {
     tree_decorations: Arc<files::TreeDecorations>,
     open_files: Vec<files::OpenFile>,
     active_file: Option<usize>,
+    file_pane_focus: FocusHandle,
     _files_task: Task<()>,
     finder: Entity<CommandState>,
     finder_results: Vec<String>,
@@ -336,6 +358,7 @@ impl Workspace {
             tree_decorations: Arc::default(),
             open_files: Vec::new(),
             active_file: None,
+            file_pane_focus: cx.focus_handle(),
             _files_task: Task::ready(()),
             finder: cx.new(|cx| CommandState::new(window, cx)),
             finder_results: Vec::new(),
@@ -364,10 +387,15 @@ impl Workspace {
             if window.is_window_active() {
                 this.refresh(cx);
                 this.reload_open_files(window, cx);
+            } else {
+                this.save_session(cx);
             }
         })
         .detach();
         this.refresh(cx);
+        if !cfg!(test) {
+            this.restore_session(window, cx);
+        }
         this
     }
 
@@ -441,6 +469,45 @@ impl Workspace {
     #[cfg(test)]
     pub fn commit_message_text(&self, cx: &App) -> String {
         self.commit_message.read(cx).value().to_string()
+    }
+
+    /// Saves open tabs and layout for the next time this repository opens.
+    pub fn save_session(&self, _: &App) {
+        let session = crate::state::Session {
+            open_files: self
+                .open_files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
+            active_file: self.active_file,
+            panel: self.panel.name().to_owned(),
+            sidebar_hidden: !self.sidebar_visible,
+            split_diff: self.diff_mode == DiffMode::Split,
+        };
+        crate::state::save_session(self.repo.workdir(), &session);
+    }
+
+    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = crate::state::load_session(self.repo.workdir()) else {
+            return;
+        };
+        for path in &session.open_files {
+            if self.repo.workdir().join(path).is_file() {
+                self.open_file(path, None, window, cx);
+            }
+        }
+        self.active_file = session
+            .active_file
+            .filter(|ix| *ix < self.open_files.len())
+            .or(self.active_file);
+        if session.split_diff {
+            self.diff_mode = DiffMode::Split;
+            self.diff
+                .update(cx, |diff, cx| diff.set_mode(DiffMode::Split, cx));
+        }
+        let panel = Panel::from_name(&session.panel).unwrap_or(Panel::Changes);
+        self.show_panel(panel, window, cx);
+        self.sidebar_visible = !session.sidebar_hidden;
     }
 
     fn selected_key(&self) -> Option<FileKey> {
@@ -1291,7 +1358,9 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &ToggleHideReviewed, _, cx| this.toggle_hide_reviewed(cx)),
             )
-            .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
+            .on_action(
+                cx.listener(|this, _: &TogglePreview, window, cx| this.toggle_preview(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FindFile, window, cx| this.open_finder(window, cx)))
             .on_action(
                 cx.listener(|this, _: &OpenSelected, window, cx| match this.panel {

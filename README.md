@@ -43,8 +43,25 @@ cargo run -- /path/to/repo
 | File tree | arrows, `enter` | Move, open/close folders, open file |
 | Search results | `j` / `k`, `enter` | Move, open at the line |
 | File view | `cmd-s` | Save |
-| | `cmd-f` | Find in file |
+| | `cmd-f` / `cmd-alt-f` | Find / replace in file |
 | | `ctrl-g` | Go to line (`line` or `line:column`) |
 | | `f12` / cmd-click | Go to definition |
 | | `shift-f12` | Find references |
 | | hover | Type and docs (needs the language server installed) |
+
+## Custom keys
+
+Bindings in `~/.config/yin/keymap.json` apply over the defaults. Actions are
+named `yin::<Name>`, as in `crates/yin/src/workspace.rs` (`Commit`,
+`SelectNext`, `ShowHistory`, …); contexts are `Workspace`, `Changes`,
+`History`, `Files`, `SearchResults`, `Diff` and `Input`. Problems show as a
+notification at launch.
+
+```json
+[
+  { "key": "cmd-k", "action": "yin::ShowHistory" },
+  { "key": "ctrl-n", "action": "yin::SelectNext", "context": "Changes" }
+]
+```
+
+Open tabs, the sidebar tab and the diff mode are restored per repository.

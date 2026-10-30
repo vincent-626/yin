@@ -168,7 +168,9 @@ Each bullet is roughly one commit. A phase ends with something usable.
   reviewed files; an agent's later edit brings the file back. Saved per repo.
 - [x] Worktree picker (`w`): every worktree with its branch and change count;
   picking one switches the window.
-- Session restore (open tabs, panel sizes), keymap file in `~/.config/yin`.
+- [x] Session restore per repository (open tabs, active tab, sidebar tab and
+  visibility, diff mode), saved on every way out. Panel sizes are not kept yet.
+- [x] Keymap file `~/.config/yin/keymap.json`; problems shown at launch.
 - Packaged `.app` bundle and `script/install`.
 
 ## Risks

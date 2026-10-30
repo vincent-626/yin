@@ -617,22 +617,28 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(file) = self.active_file.and_then(|ix| self.open_files.get_mut(ix))
             && is_markdown(&file.path)
         {
             file.preview = !file.preview;
+            self.focus_active_file(window, cx);
             cx.notify();
         }
     }
 
+    /// Focuses what the active tab shows: its editor, or for a markdown
+    /// preview or unreadable file the pane itself. Focusing a hidden editor
+    /// would leave keys with nowhere to go.
     pub(super) fn focus_active_file(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(FileContent::Text { editor, .. }) = self
-            .active_file
-            .and_then(|ix| self.open_files.get(ix))
-            .map(|file| &file.content)
-        {
-            editor.read(cx).focus_handle(cx).focus(window, cx);
+        let Some(file) = self.active_file.and_then(|ix| self.open_files.get(ix)) else {
+            return;
+        };
+        match &file.content {
+            FileContent::Text { editor, .. } if !file.preview => {
+                editor.read(cx).focus_handle(cx).focus(window, cx)
+            }
+            _ => self.file_pane_focus.focus(window, cx),
         }
     }
 
@@ -765,6 +771,8 @@ impl Workspace {
                 .into_any_element(),
         };
         v_flex()
+            .id("file-pane")
+            .track_focus(&self.file_pane_focus)
             .size_full()
             .min_w_0()
             .child(
@@ -807,7 +815,9 @@ impl Workspace {
                                 .xsmall()
                                 .mr_2()
                                 .label(if file.preview { "Source" } else { "Preview" })
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx))),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_preview(window, cx)
+                                })),
                         )
                     }),
             )

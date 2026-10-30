@@ -9,6 +9,43 @@ fn state_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join("Library/Application Support/yin"))
 }
 
+/// What a repository's window looked like, restored when it opens again.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Session {
+    pub open_files: Vec<String>,
+    pub active_file: Option<usize>,
+    /// `changes`, `history`, `files` or `search`.
+    pub panel: String,
+    pub sidebar_hidden: bool,
+    pub split_diff: bool,
+}
+
+fn session_file(workdir: &Path) -> Option<PathBuf> {
+    let key = crate::review::content_hash(Some(workdir.as_os_str().as_encoded_bytes()));
+    Some(state_dir()?.join(format!("sessions/{key:016x}.json")))
+}
+
+pub fn load_session(workdir: &Path) -> Option<Session> {
+    let text = std::fs::read_to_string(session_file(workdir)?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn save_session(workdir: &Path, session: &Session) {
+    let Some(file) = session_file(workdir) else {
+        return;
+    };
+    let result = serde_json::to_string_pretty(session)
+        .map_err(std::io::Error::other)
+        .and_then(|json| {
+            std::fs::create_dir_all(file.parent().expect("sessions dir"))?;
+            std::fs::write(&file, json)
+        });
+    if let Err(error) = result {
+        eprintln!("yin: couldn't save the session: {error}");
+    }
+}
+
 pub fn last_repo() -> Option<PathBuf> {
     let contents = std::fs::read_to_string(state_dir()?.join("last-repo")).ok()?;
     let path = contents.trim();
@@ -56,6 +93,14 @@ mod tests {
             .status()
             .unwrap();
         dir
+    }
+
+    #[test]
+    fn sessions_tolerate_missing_fields() {
+        let session: Session = serde_json::from_str(r#"{"open_files": ["a.rs"]}"#).unwrap();
+        assert_eq!(session.open_files, ["a.rs"]);
+        assert_eq!(session.panel, "");
+        assert!(!session.split_diff);
     }
 
     #[test]

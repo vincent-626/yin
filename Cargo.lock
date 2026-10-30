@@ -8740,6 +8740,8 @@ dependencies = [
  "gpui-kit",
  "ignore",
  "notify",
+ "serde",
+ "serde_json",
  "tempfile",
  "trash",
  "yin_fs",

@@ -1,5 +1,6 @@
 mod assets;
 mod changes;
+mod keymap;
 mod review;
 mod shell;
 mod state;
@@ -31,6 +32,7 @@ fn main() {
             gpui_kit::init(cx);
             shell::init(cx);
             workspace::init(cx);
+            let keymap_errors = keymap::load(cx);
             // Always yin: dark only, never follow the system appearance.
             Theme::change(ThemeMode::Dark, None, cx);
             let options = WindowOptions {
@@ -39,7 +41,7 @@ fn main() {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| Shell::new(repo, window, cx))
+                cx.new(|cx| Shell::new(repo, keymap_errors, window, cx))
             })
             .expect("failed to open window");
             cx.on_window_closed(|cx, _| {
