@@ -42,3 +42,6 @@ cargo run -- /path/to/repo
 | File view | `cmd-s` | Save |
 | | `cmd-f` | Find in file |
 | | `ctrl-g` | Go to line (`line` or `line:column`) |
+| | `f12` / cmd-click | Go to definition |
+| | `shift-f12` | Find references |
+| | hover | Type and docs (needs the language server installed) |

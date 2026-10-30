@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Move the mouse (and optionally click) at a point in the newest yin window,
+# in window points from its top-left: script/mouse <x> <y> [click]
+set -euo pipefail
+pid=$(pgrep -nx yin) || { echo "yin is not running" >&2; exit 1; }
+swift - "$pid" "$1" "$2" "${3:-}" <<'SWIFT'
+import CoreGraphics
+import Foundation
+let args = CommandLine.arguments
+let pid = Int(args[1])!, x = Double(args[2])!, y = Double(args[3])!, click = args[4] == "click"
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+guard let w = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }) else { exit(1) }
+let b = w[kCGWindowBounds as String] as! [String: Double]
+let point = CGPoint(x: b["X"]! + x, y: b["Y"]! + y)
+CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+if click {
+    usleep(50_000)
+    CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+SWIFT

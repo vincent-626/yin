@@ -41,7 +41,9 @@ visually before committing.
 
 To exercise interactions in the real app, launch it yourself
 (`./target/debug/yin <repo> &`), send keys with `script/drive` (System Events
-keystrokes), and capture with `screencapture -x -o -l <window id>`. Test
+keystrokes), move or click the mouse with `script/mouse <x> <y> [click]`
+(window points), and capture with `screencapture -x -o -l $(script/window-id)`.
+`script/demo-repo <dir>` makes a throwaway repo with every kind of change. Test
 against a throwaway repo in a scratch directory, never this one. Kill the app
 when done (`pkill -x yin`); a second instance steals keystrokes.
 

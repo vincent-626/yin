@@ -152,9 +152,16 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - Known: the first character typed right after `cmd-f` is sometimes dropped
   (gpui-component find bar).
 
-### Phase 5 — Code intelligence
-- `yin_lsp`: spawn rust-analyzer / typescript-language-server per root.
-- Go to definition, find references, hover. Nothing else.
+### Phase 5 — Code intelligence · status: done
+- [x] `yin_lsp`: JSON-RPC over stdio, answers server requests, finds servers via
+  the login shell's PATH. Tested against rust-analyzer.
+- [x] One server per language, started when its first file opens
+  (rust-analyzer, gopls, typescript-language-server, pyright, clangd); open files
+  synced as they are edited.
+- [x] Go to definition (`f12`, cmd-click) opening other files in tabs; files
+  outside the repo open read-only.
+- [x] Hover (gpui-component's popover).
+- [x] Find references (`shift-f12`), listed in the Search tab.
 
 ### Phase 6 — Agent-era review and polish
 - "Since last review": snapshot the reviewed tree, show only newer changes.
