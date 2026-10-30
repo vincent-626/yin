@@ -8742,6 +8742,7 @@ dependencies = [
  "notify",
  "tempfile",
  "trash",
+ "yin_fs",
  "yin_git",
 ]
 

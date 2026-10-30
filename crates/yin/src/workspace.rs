@@ -31,6 +31,7 @@ use crate::watcher::{self, RepoWatcher};
 
 mod branches;
 mod conflicts;
+mod files;
 mod history;
 mod remote;
 mod staging;
@@ -65,6 +66,10 @@ pub(crate) mod actions {
             ShowHistory,
             StashPush,
             StashPop,
+            ShowFiles,
+            CloseFile,
+            TogglePreview,
+            OpenSelected,
         ]
     );
 }
@@ -72,12 +77,25 @@ use actions::*;
 
 const CHANGES_CONTEXT: &str = "Changes";
 const HISTORY_CONTEXT: &str = "History";
+const FILES_CONTEXT: &str = "Files";
 
 /// What the sidebar shows; the main pane follows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
     Changes,
     History,
+    Files,
+}
+
+impl Panel {
+    const ALL: [Panel; 3] = [Panel::Changes, Panel::History, Panel::Files];
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|panel| *panel == self)
+            .unwrap_or(0)
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -107,6 +125,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
         KeyBinding::new("cmd-2", ShowHistory, Some("Workspace")),
+        KeyBinding::new("cmd-3", ShowFiles, Some("Workspace")),
+        KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
+        KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
+        KeyBinding::new("cmd-shift-v", TogglePreview, Some("Workspace")),
+        KeyBinding::new("enter", OpenSelected, Some(FILES_CONTEXT)),
         KeyBinding::new("down", SelectNext, Some(HISTORY_CONTEXT)),
         KeyBinding::new("j", SelectNext, Some(HISTORY_CONTEXT)),
         KeyBinding::new("up", SelectPrevious, Some(HISTORY_CONTEXT)),
@@ -159,6 +182,14 @@ pub struct Workspace {
     history_head: Option<String>,
     _history_task: Task<()>,
     _commit_task: Task<()>,
+    files: Arc<Vec<String>>,
+    files_loaded: bool,
+    file_tree: Entity<gpui_kit::component::tree::TreeState>,
+    expanded_dirs: std::collections::HashSet<String>,
+    tree_decorations: Arc<files::TreeDecorations>,
+    open_files: Vec<files::OpenFile>,
+    active_file: Option<usize>,
+    _files_task: Task<()>,
     branches: Vec<yin_git::BranchRef>,
     branch_picker: Entity<CommandState>,
     _remote_task: Task<()>,
@@ -232,6 +263,14 @@ impl Workspace {
             history_head: None,
             _history_task: Task::ready(()),
             _commit_task: Task::ready(()),
+            files: Arc::default(),
+            files_loaded: false,
+            file_tree: Self::new_file_tree(cx),
+            expanded_dirs: Default::default(),
+            tree_decorations: Arc::default(),
+            open_files: Vec::new(),
+            active_file: None,
+            _files_task: Task::ready(()),
             branches: Vec::new(),
             branch_picker: cx.new(|cx| CommandState::new(window, cx)),
             _remote_task: Task::ready(()),
@@ -240,11 +279,12 @@ impl Workspace {
         // The test scheduler is deterministic and rejects wakeups from the
         // FSEvents thread; tests refresh after each operation anyway.
         if !cfg!(test) {
-            this.watch(cx);
+            this.watch(window, cx);
         }
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.refresh(cx);
+                this.reload_open_files(window, cx);
             }
         })
         .detach();
@@ -254,7 +294,7 @@ impl Workspace {
 
     /// Refreshes after filesystem changes, batching bursts such as a build or
     /// an agent rewriting many files.
-    fn watch(&mut self, cx: &mut Context<Self>) {
+    fn watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (watcher, events) = match watcher::watch(&self.repo) {
             Ok(watch) => watch,
             Err(error) => {
@@ -263,13 +303,17 @@ impl Workspace {
             }
         };
         self._watcher = Some(watcher);
-        self._watch_task = cx.spawn(async move |this, cx| {
+        self._watch_task = cx.spawn_in(window, async move |this, cx| {
             while events.recv().await.is_ok() {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 while events.try_recv().is_ok() {}
-                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
+                let refreshed = this.update_in(cx, |this, window, cx| {
+                    this.refresh(cx);
+                    this.reload_open_files(window, cx);
+                });
+                if refreshed.is_err() {
                     break;
                 }
             }
@@ -368,6 +412,10 @@ impl Workspace {
         self.loaded = true;
         if self.history_loaded && self.history_head != self.status.branch.oid {
             self.load_history(cx);
+        }
+        self.update_tree_decorations();
+        if self.files_loaded {
+            self.load_files(cx);
         }
         // Reload even when the selection is unchanged: the file may have changed.
         self.load_diff(cx);
@@ -663,6 +711,7 @@ impl Workspace {
         let diff = match self.panel {
             Panel::Changes => &self.diff,
             Panel::History => &self.history_diff,
+            Panel::Files => return self.focus_active_file(window, cx),
         };
         if !diff.read(cx).files().is_empty() {
             diff.read(cx).focus_handle(cx).focus(window, cx);
@@ -680,6 +729,12 @@ impl Workspace {
                     self.load_history(cx);
                 }
                 self.history_focus.focus(window, cx);
+            }
+            Panel::Files => {
+                if !self.files_loaded {
+                    self.load_files(cx);
+                }
+                self.file_tree.update(cx, |tree, cx| tree.focus(window, cx));
             }
         }
         cx.notify();
@@ -701,16 +756,9 @@ impl Workspace {
                         TabBar::new("sidebar-tabs")
                             .segmented()
                             .w_full()
-                            .selected_index(match self.panel {
-                                Panel::Changes => 0,
-                                Panel::History => 1,
-                            })
+                            .selected_index(self.panel.index())
                             .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                                let panel = if *ix == 0 {
-                                    Panel::Changes
-                                } else {
-                                    Panel::History
-                                };
+                                let panel = Panel::ALL.get(*ix).copied().unwrap_or(Panel::Changes);
                                 this.show_panel(panel, window, cx);
                             }))
                             .child(Tab::new().flex_1().label(format!(
@@ -720,12 +768,14 @@ impl Workspace {
                                     n => format!(" {n}"),
                                 }
                             )))
-                            .child(Tab::new().flex_1().label("History")),
+                            .child(Tab::new().flex_1().label("History"))
+                            .child(Tab::new().flex_1().label("Files")),
                     ),
             )
             .map(|this| match self.panel {
                 Panel::Changes => this.child(self.render_changes(window, cx)),
                 Panel::History => this.child(self.render_history(window, cx)),
+                Panel::Files => this.child(self.render_file_tree(cx)),
             })
     }
 
@@ -1059,6 +1109,7 @@ impl Render for Workspace {
                     this.select(ix, cx);
                 }
                 Panel::History => this.step_commit(1, cx),
+                Panel::Files => this.step_open_file(1, cx),
             }))
             .on_action(
                 cx.listener(|this, _: &SelectPrevious, _, cx| match this.panel {
@@ -1067,6 +1118,7 @@ impl Render for Workspace {
                         this.select(ix, cx);
                     }
                     Panel::History => this.step_commit(-1, cx),
+                    Panel::Files => this.step_open_file(-1, cx),
                 }),
             )
             .on_action(cx.listener(|this, _: &StashPush, window, cx| this.stash_push(window, cx)))
@@ -1078,6 +1130,18 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &ShowHistory, window, cx| {
                 this.show_panel(Panel::History, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowFiles, window, cx| {
+                this.show_panel(Panel::Files, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CloseFile, _, cx| {
+                if let Some(ix) = this.active_file {
+                    this.close_file(ix, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
+            .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {
+                this.open_selected_tree_item(window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleStaged, window, cx| {
                 if let Some(ix) = this.selected {
@@ -1148,6 +1212,7 @@ impl Render for Workspace {
                         .child(resizable_panel().child(match self.panel {
                             Panel::Changes => self.render_diff(window, cx).into_any_element(),
                             Panel::History => self.render_commit_detail(cx),
+                            Panel::Files => self.render_open_files(cx),
                         })),
                 ),
             )
