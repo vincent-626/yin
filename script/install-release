@@ -2,17 +2,23 @@
 # Install yin from a GitHub release instead of building it:
 #   script/install-release            the latest release
 #   script/install-release v0.1.0     a specific one
-# Needs the GitHub CLI, logged in with access to the repository.
+# Also works piped from the web:
+#   curl -fsSL https://raw.githubusercontent.com/vincent-626/yin/main/script/install-release | bash
 set -euo pipefail
 repo=vincent-626/yin
 tag=${1:-}
+if [ -n "$tag" ]; then
+  base="https://github.com/$repo/releases/download/$tag"
+else
+  base="https://github.com/$repo/releases/latest/download"
+fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-gh release download ${tag:+"$tag"} --repo "$repo" --pattern 'yin-*-macos-arm64.zip*' --dir "$work"
-zip=$(ls "$work"/yin-*-macos-arm64.zip)
-(cd "$work" && shasum -a 256 -c "$(basename "$zip").sha256")
-ditto -x -k "$zip" "$work"
+curl -fsSL "$base/yin-macos-arm64.zip" -o "$work/yin-macos-arm64.zip"
+curl -fsSL "$base/yin-macos-arm64.zip.sha256" -o "$work/yin-macos-arm64.zip.sha256"
+(cd "$work" && shasum -a 256 -c yin-macos-arm64.zip.sha256 >/dev/null)
+ditto -x -k "$work/yin-macos-arm64.zip" "$work"
 
 # The app is ad-hoc signed, not notarized: clear the download quarantine so
 # Gatekeeper lets it open.
@@ -28,4 +34,5 @@ target=$(cd "${1:-.}" && pwd)
 exec ~/Applications/yin.app/Contents/MacOS/yin "$target" >/dev/null 2>&1 &
 SHIM
 chmod +x ~/.local/bin/yin
-echo "Installed $(basename "$zip" .zip) to ~/Applications/yin.app"
+version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ~/Applications/yin.app/Contents/Info.plist)
+echo "Installed yin $version to ~/Applications/yin.app"

@@ -83,17 +83,21 @@ Pushing a tag that matches the version in `crates/yin/Cargo.toml` builds
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Install a release on another Mac (needs `gh`, logged in):
+Install the latest release on any Apple Silicon Mac, no Rust needed:
 
 ```bash
-script/install-release          # latest, or: script/install-release v0.1.0
+curl -fsSL https://raw.githubusercontent.com/vincent-626/yin/main/script/install-release | bash
 ```
 
-The app is ad-hoc signed, not notarized; `install-release` clears the
-download quarantine so macOS opens it. Downloading the zip by hand instead,
+The app is ad-hoc signed, not notarized; the installer checks the download's
+checksum and clears its quarantine so macOS opens it. Downloading the zip by hand instead,
 right-click the app and choose Open the first time. Signing for real needs an
 Apple Developer ID ($99/year), then `codesign` with it and `notarytool` in the
 release workflow.
 
 CI (`.github/workflows/ci.yml`) runs format, clippy and every test on macOS for
-each push to `main` that touches code.
+each push to `main` that touches code, and for pull requests.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

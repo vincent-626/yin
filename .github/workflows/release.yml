@@ -35,10 +35,11 @@ jobs:
         run: script/bundle
 
       - name: Package
+        # A fixed asset name, so releases/latest/download/... always works.
         run: |
           cd target/release/bundle
-          ditto -c -k --keepParent yin.app "yin-${GITHUB_REF_NAME}-macos-arm64.zip"
-          shasum -a 256 "yin-${GITHUB_REF_NAME}-macos-arm64.zip" > "yin-${GITHUB_REF_NAME}-macos-arm64.zip.sha256"
+          ditto -c -k --keepParent yin.app yin-macos-arm64.zip
+          shasum -a 256 yin-macos-arm64.zip > yin-macos-arm64.zip.sha256
 
       - name: Publish the release
         env:
@@ -47,5 +48,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "yin ${GITHUB_REF_NAME}" \
             --generate-notes \
-            target/release/bundle/yin-${GITHUB_REF_NAME}-macos-arm64.zip \
-            target/release/bundle/yin-${GITHUB_REF_NAME}-macos-arm64.zip.sha256
+            target/release/bundle/yin-macos-arm64.zip \
+            target/release/bundle/yin-macos-arm64.zip.sha256
