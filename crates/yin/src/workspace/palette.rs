@@ -44,6 +44,7 @@ fn commands() -> Vec<(&'static str, MakeAction)> {
         ("Find references", || Box::new(FindReferences)),
         ("File history", || Box::new(FileHistory)),
         ("Blame", || Box::new(ToggleBlame)),
+        ("Copy commit hash", || Box::new(CopyCommitHash)),
         ("Save file", || Box::new(SaveFile)),
         ("Close tab", || Box::new(CloseFile)),
         ("Markdown preview / source", || Box::new(TogglePreview)),

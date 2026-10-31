@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gpui_kit::ClipboardItem;
+use gpui_kit::base::{SelectableText, TextSelectionHandle};
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
@@ -14,6 +16,7 @@ use gpui_kit::component::{
     tag::Tag,
     v_flex,
 };
+use gpui_kit::component::{Icon, IconName, WindowExt as _, tooltip::Tooltip};
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, InteractiveElement as _, IntoElement,
     ParentElement as _, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -30,7 +33,12 @@ const HISTORY_LIMIT: usize = 2000;
 pub(super) struct CommitDetail {
     oid: String,
     message: String,
+    /// Makes the subject and body one selectable, copyable document.
+    selection: TextSelectionHandle,
 }
+
+/// Body lines shown before "Show more".
+const COLLAPSED_BODY_LINES: usize = 3;
 
 impl Workspace {
     /// Reloads the commit list, keeping the selected commit when it remains.
@@ -95,6 +103,18 @@ impl Workspace {
         self.show_panel(super::Panel::History, window, cx);
     }
 
+    pub(super) fn copy_commit_hash(&self, oid: &str, window: &mut Window, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(oid.to_owned()));
+        window.push_notification(format!("Copied {}", &oid[..oid.len().min(7)]), cx);
+    }
+
+    /// Copies the selected commit's full hash.
+    pub(super) fn copy_selected_commit_hash(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(oid) = self.selected_commit().map(|commit| commit.oid.clone()) {
+            self.copy_commit_hash(&oid, window, cx);
+        }
+    }
+
     fn selected_commit(&self) -> Option<&Commit> {
         self.commits.get(self.commit_selected?)
     }
@@ -139,7 +159,12 @@ impl Workspace {
                 }
                 match result {
                     Ok((message, files)) => {
-                        this.commit_detail = Some(CommitDetail { oid, message });
+                        let selection = TextSelectionHandle::new(message.clone(), cx);
+                        this.commit_detail = Some(CommitDetail {
+                            oid,
+                            message,
+                            selection,
+                        });
                         this.history_diff
                             .update(cx, |state, cx| state.set_files(files, cx));
                         this.schedule_relayout(cx);
@@ -264,6 +289,25 @@ impl Workspace {
             },
             None => (commit.subject.clone(), String::new()),
         };
+        let body_lines = body.lines().count();
+        let long = body_lines > COLLAPSED_BODY_LINES;
+        let shown_body = if long && !self.commit_body_expanded {
+            let mut shown: Vec<&str> = body.lines().take(COLLAPSED_BODY_LINES).collect();
+            if let Some(last) = shown.last_mut() {
+                *last = last.trim_end();
+            }
+            format!("{}…", shown.join("\n"))
+        } else {
+            body.clone()
+        };
+        let selectable = |id: &'static str, order: u64, text: String| match detail {
+            Some(detail) => SelectableText::with_handle(id, detail.selection.clone(), text)
+                .document_order(order)
+                .into_any_element(),
+            None => SelectableText::new(id, text).into_any_element(),
+        };
+        let oid = commit.oid.clone();
+        let short_oid = commit.short_oid.clone();
         v_flex()
             .size_full()
             .min_w_0()
@@ -276,20 +320,21 @@ impl Workspace {
                     .gap_1()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(div().text_lg().font_semibold().child(subject))
+                    .child(div().text_lg().font_semibold().child(selectable(
+                        "commit-subject",
+                        0,
+                        subject,
+                    )))
                     .when(!body.is_empty(), |this| {
                         this.child(
                             div()
                                 .id("commit-body")
-                                .max_h_40()
-                                .overflow_y_scroll()
+                                .when(self.commit_body_expanded, |this| {
+                                    this.max_h_80().overflow_y_scroll()
+                                })
                                 .text_sm()
-                                .whitespace_normal()
                                 .text_color(cx.theme().muted_foreground)
-                                .children(
-                                    body.lines()
-                                        .map(|line| div().min_h_4().child(line.to_owned())),
-                                ),
+                                .child(selectable("commit-body-text", 1, shown_body)),
                         )
                     })
                     .child(
@@ -298,20 +343,50 @@ impl Workspace {
                             .gap_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(super::style::hash(&commit.short_oid, cx))
+                            .child(
+                                h_flex()
+                                    .id("copy-hash")
+                                    .gap_1()
+                                    .cursor_pointer()
+                                    .hover(|this| this.text_color(cx.theme().foreground))
+                                    .child(super::style::hash(&short_oid, cx))
+                                    .child(Icon::new(IconName::Copy).xsmall())
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new("Copy commit hash").build(window, cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.copy_commit_hash(&oid, window, cx)
+                                    })),
+                            )
                             .child(
                                 div()
                                     .text_color(cx.theme().foreground)
                                     .child(commit.author.clone()),
                             )
-                            .child(relative_time(commit.time)),
+                            .child(relative_time(commit.time))
+                            .when(long, |this| {
+                                let expanded = self.commit_body_expanded;
+                                this.child(div().flex_1()).child(
+                                    Button::new("toggle-body")
+                                        .ghost()
+                                        .xsmall()
+                                        .label(if expanded { "Show less" } else { "Show more" })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.commit_body_expanded = !this.commit_body_expanded;
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
                     ),
             )
             .child(
                 div().flex_1().min_h_0().child(
                     Diff::new(&self.history_diff)
                         .line_number(true)
-                        .render_header(|file, _, cx| super::style::diff_file_header(file, cx)),
+                        .render_header({
+                            let state = self.history_diff.clone();
+                            move |file, _, cx| super::style::diff_file_header(file, &state, cx)
+                        }),
                 ),
             )
             .into_any_element()

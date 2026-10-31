@@ -51,6 +51,7 @@ current key.
 | Where | Key | Does |
 |---|---|---|
 | History | `j` / `k`, `enter` | Move, read the commit |
+| History | `cmd-c` | Copy the commit's hash (click the hash to copy it too) |
 | File tree | arrows, `enter` | Move, open and close folders, open a file |
 | Search results | `j` / `k`, `enter` | Move, open at the line |
 

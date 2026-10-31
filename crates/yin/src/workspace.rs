@@ -94,6 +94,7 @@ pub(crate) mod actions {
             CommandPalette,
             FileHistory,
             ToggleBlame,
+            CopyCommitHash,
         ]
     );
 }
@@ -215,6 +216,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("up", SelectPrevious, Some(HISTORY_CONTEXT)),
         KeyBinding::new("k", SelectPrevious, Some(HISTORY_CONTEXT)),
         KeyBinding::new("enter", FocusDiff, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("cmd-c", CopyCommitHash, Some(HISTORY_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(HISTORY_CONTEXT)),
         KeyBinding::new("space", StageLines, Some("Diff")),
         KeyBinding::new("s", StageHunk, Some("Diff")),
@@ -275,6 +277,8 @@ pub struct Workspace {
     _commit_task: Task<()>,
     /// The History tab shows only this file's commits.
     history_path: Option<String>,
+    /// Long commit messages show in full.
+    commit_body_expanded: bool,
     /// A commit to select once the history loads.
     pending_commit: Option<String>,
     /// Blame for one open file, when shown.
@@ -401,6 +405,7 @@ impl Workspace {
             _history_task: Task::ready(()),
             _commit_task: Task::ready(()),
             history_path: None,
+            commit_body_expanded: false,
             pending_commit: None,
             blame: None,
             files: Arc::default(),
@@ -1223,13 +1228,12 @@ impl Workspace {
                             }),
                     )
                 } else {
-                    this.child(
-                        div().flex_1().min_h_0().child(
-                            Diff::new(&self.diff)
-                                .line_number(true)
-                                .render_header(|file, _, cx| style::diff_file_header(file, cx)),
-                        ),
-                    )
+                    this.child(div().flex_1().min_h_0().child(
+                        Diff::new(&self.diff).line_number(true).render_header({
+                            let state = self.diff.clone();
+                            move |file, _, cx| style::diff_file_header(file, &state, cx)
+                        }),
+                    ))
                 }
             })
     }
@@ -1458,6 +1462,9 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &ToggleBlame, window, cx| this.toggle_blame(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &CopyCommitHash, window, cx| {
+                this.copy_selected_commit_hash(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ShowFiles, window, cx| {
                 this.show_panel(Panel::Files, window, cx)
             }))

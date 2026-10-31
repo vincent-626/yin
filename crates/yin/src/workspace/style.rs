@@ -1,23 +1,24 @@
 //! Shared visual conventions, so the same kind of information looks the same
-//! everywhere: additions green, deletions red, commit hashes yellow (as git
-//! prints them), people at full strength, times and paths muted.
+//! everywhere: additions green, deletions red, people at full strength,
+//! commit hashes, times and paths muted.
 
 use gpui_kit::component::{
     ActiveTheme as _, StyledExt as _,
-    diff::{DiffFile, DiffFileStatus},
+    diff::{DiffFile, DiffFileStatus, DiffState},
     h_flex,
 };
 use gpui_kit::{
-    AnyElement, App, Div, Hsla, IntoElement as _, ParentElement as _, Styled as _, div,
+    AnyElement, App, Div, Entity, Hsla, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div,
     prelude::FluentBuilder as _,
 };
 
-/// A short commit hash.
+/// A short commit hash: monospace, quiet.
 pub(super) fn hash(oid: &str, cx: &App) -> Div {
     div()
         .flex_none()
         .font_family(cx.theme().mono_font_family.clone())
-        .text_color(cx.theme().yellow.opacity(0.85))
+        .text_color(cx.theme().muted_foreground)
         .child(oid[..oid.len().min(7)].to_owned())
 }
 
@@ -56,7 +57,8 @@ fn tag(label: &'static str, color: Hsla) -> Div {
 
 /// The header of a file in a diff: its name first, its folder muted, the
 /// change counts, and what happened to it when that's more than an edit.
-pub(super) fn diff_file_header(file: &DiffFile, cx: &App) -> AnyElement {
+/// Clicking anywhere on it collapses or expands the file.
+pub(super) fn diff_file_header(file: &DiffFile, state: &Entity<DiffState>, cx: &App) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let renamed_from = match (file.original_path(), file.modified_path()) {
         (Some(old), Some(new)) if old != new => Some(old.clone()),
@@ -72,10 +74,20 @@ pub(super) fn diff_file_header(file: &DiffFile, cx: &App) -> AnyElement {
         DiffFileStatus::Conflicted => Some(tag("Conflict", cx.theme().yellow)),
         _ => None,
     };
+    let toggle_path = path.to_string();
+    let state = state.clone();
     h_flex()
+        .id(SharedString::from(format!("file-header-{path}")))
         .w_full()
         .min_w_0()
         .gap_2()
+        .cursor_pointer()
+        .on_click(move |_, _, cx| {
+            state.update(cx, |state, cx| {
+                let collapsed = state.is_file_collapsed(&toggle_path);
+                state.set_file_collapsed(&toggle_path, !collapsed, cx);
+            });
+        })
         .child(
             h_flex()
                 .flex_1()
