@@ -550,7 +550,11 @@ fn notes_follow_agent_edits_and_go_outdated(cx: &mut TestAppContext) {
     });
 
     // The agent rewrites the line: the note is outdated.
-    std::fs::write(path.join("f.txt"), numbered(1..=10).replace("line 5\n", "line 5!\n")).unwrap();
+    std::fs::write(
+        path.join("f.txt"),
+        numbered(1..=10).replace("line 5\n", "line 5!\n"),
+    )
+    .unwrap();
     act(cx, actions::Refresh.boxed_clone());
     cx.update(|cx| assert!(workspace.read(cx).notes()[0].outdated));
 }
