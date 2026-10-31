@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+## 0.4.1 — 2026-10-31
+
 - A changelog, used for the release notes.
 - Fixed: the sidebar came back wider after `cmd-b` hid and showed it.
 - The stack above History shows each layer's commit count dimmed, apart from
