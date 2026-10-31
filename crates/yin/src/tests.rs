@@ -353,6 +353,18 @@ fn switcher_and_welcome_open_repositories(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
+    // Typing goes to the switcher's search.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.input("zz", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let shell = cx.update(crate::windows::frontmost).unwrap().0;
+    assert_eq!(cx.update(|cx| shell.read(cx).switcher_query(cx)), "zz");
+    cx.update_window(window, |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    cx.run_until_parked();
 
     // A welcome window takes the repository picked from it.
     cx.update(|cx| crate::windows::open(None, cx));

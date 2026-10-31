@@ -119,6 +119,11 @@ impl Shell {
         this
     }
 
+    #[cfg(test)]
+    pub fn switcher_query(&self, cx: &App) -> String {
+        self.switcher.read(cx).query(cx).to_string()
+    }
+
     pub fn unsaved_files(&self, cx: &App) -> Vec<String> {
         self.workspace
             .as_ref()
