@@ -920,3 +920,17 @@ fn opens_and_reads_pull_requests_through_gh() {
     let gh = fake_gh(bin.path(), "echo 'HTTP 401: Bad credentials' >&2\nexit 1\n");
     assert!(fx.repo.pull_request(&gh).is_err());
 }
+
+#[test]
+fn finds_quoted_code_after_it_moves() {
+    let patch = "diff --git a/y.rs b/y.rs\n--- a/y.rs\n+++ b/y.rs\n@@ -1,3 +1,6 @@\n a\n+new one\n+new two\n b\n+x\n+y\n c\n";
+    let file = FilePatch::of_file(patch, "y.rs", Side::New).unwrap();
+    let code = |lines: &[&str]| lines.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+    assert_eq!(file.find_lines(Side::New, &code(&["x", "y"])), [5]);
+    assert_eq!(file.find_lines(Side::New, &code(&["b"])), [4]);
+    assert_eq!(file.find_lines(Side::Old, &code(&["b", "c"])), [2]);
+    // Lines that read the same but aren't next to each other don't count.
+    assert!(file.find_lines(Side::New, &code(&["a", "b"])).is_empty());
+    assert!(file.find_lines(Side::New, &code(&["gone"])).is_empty());
+    assert!(FilePatch::of_file(patch, "z.rs", Side::New).is_none());
+}

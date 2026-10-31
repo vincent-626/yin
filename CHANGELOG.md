@@ -5,6 +5,11 @@ next version.
 
 ## Unreleased
 
+- Review notes follow their code as an agent edits: a note moves with its
+  lines, and when they change or disappear it's marked outdated, shown at the
+  top of its file with the code it was about, and flagged in the prompt. Notes
+  written on commits in History show wherever their code appears there.
+
 ## 0.4.1 — 2026-10-31
 
 - A changelog, used for the release notes.

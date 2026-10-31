@@ -299,6 +299,8 @@ pub struct Workspace {
     picking_compare: bool,
     notes: crate::notes::Notes,
     note_draft: Option<annotations::NoteDraft>,
+    /// Notes' lines in the History diff, by id.
+    history_note_places: Vec<(u64, usize)>,
     pull_request: Option<yin_git::PullRequest>,
     review_threads: Vec<yin_git::ReviewThread>,
     pr_check: Option<pull_request::PrCheck>,
@@ -449,6 +451,7 @@ impl Workspace {
             picking_compare: false,
             notes,
             note_draft: None,
+            history_note_places: Vec::new(),
             pull_request: None,
             review_threads: Vec::new(),
             pr_check: None,

@@ -121,31 +121,59 @@ impl FilePatch {
         Ok(Self { header, hunks })
     }
 
-    /// The text of lines `start..=end` on `side`, such as a reviewer's
-    /// selection, from `patch`, which may hold many files.
-    pub fn lines_in(patch: &str, path: &str, side: Side, start: usize, end: usize) -> Vec<String> {
+    /// `path`'s patch out of `patch`, which may hold many files, found by its
+    /// name on `side` (a renamed file has a different name on each).
+    pub fn of_file(patch: &str, path: &str, side: Side) -> Option<Self> {
         let marker = match side {
             Side::Old => format!("--- a/{path}"),
             Side::New => format!("+++ b/{path}"),
         };
-        let Some(section) = patch
+        let section = patch
             .split("diff --git ")
-            .find(|section| section.lines().any(|line| line == marker))
-        else {
+            .find(|section| section.lines().any(|line| line == marker))?;
+        Self::parse(&format!("diff --git {section}")).ok()
+    }
+
+    /// The text of lines `start..=end` on `side`, such as a reviewer's
+    /// selection, from `patch`, which may hold many files.
+    pub fn lines_in(patch: &str, path: &str, side: Side, start: usize, end: usize) -> Vec<String> {
+        let Some(file) = Self::of_file(patch, path, side) else {
             return Vec::new();
         };
-        let Ok(file) = Self::parse(&format!("diff --git {section}")) else {
+        file.side_lines(side)
+            .filter(|(line, _)| (start..=end).contains(line))
+            .map(|(_, text)| text.to_owned())
+            .collect()
+    }
+
+    /// Each line the patch shows on `side`, with its number.
+    fn side_lines(&self, side: Side) -> impl Iterator<Item = (usize, &str)> {
+        self.rows().filter_map(move |row| {
+            let line = match side {
+                Side::Old => row.old_line,
+                Side::New => row.new_line,
+            };
+            Some((line?, row.text.as_str()))
+        })
+    }
+
+    /// Where `code` appears on `side` as consecutive lines: the first line
+    /// of each occurrence.
+    pub fn find_lines(&self, side: Side, code: &[String]) -> Vec<usize> {
+        if code.is_empty() {
             return Vec::new();
-        };
-        file.rows()
-            .filter(|row| {
-                let line = match side {
-                    Side::Old => row.old_line,
-                    Side::New => row.new_line,
-                };
-                line.is_some_and(|line| (start..=end).contains(&line))
+        }
+        let lines: Vec<(usize, &str)> = self.side_lines(side).collect();
+        lines
+            .windows(code.len())
+            .filter(|window| {
+                window
+                    .iter()
+                    .zip(code)
+                    .all(|((_, text), want)| text == want)
+                    && window.windows(2).all(|pair| pair[1].0 == pair[0].0 + 1)
             })
-            .map(|row| row.text.clone())
+            .map(|window| window[0].0)
             .collect()
     }
 

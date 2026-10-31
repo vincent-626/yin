@@ -208,6 +208,7 @@ impl Workspace {
         let Some(ix) = self.commit_selected else {
             self.commit_detail = None;
             self.history_patch.clear();
+            self.history_note_places.clear();
             self.history_diff
                 .update(cx, |state, cx| state.set_files([], cx));
             cx.notify();
@@ -270,6 +271,7 @@ impl Workspace {
                             message,
                         });
                         this.history_patch = patch;
+                        this.place_history_notes();
                         this.history_diff
                             .update(cx, |state, cx| state.set_files(files, cx));
                         this.schedule_relayout(cx);

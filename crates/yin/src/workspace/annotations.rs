@@ -41,8 +41,16 @@ pub(super) struct NoteDraft {
 
 /// What an annotation shows.
 enum Item {
-    Note(Note),
+    Note(Note, NotePlace),
     Thread(ReviewThread),
+}
+
+#[derive(Clone, Copy)]
+enum NotePlace {
+    /// Below this line of the note's side.
+    Line(usize),
+    /// Under the file's header: its code is gone.
+    File,
 }
 
 impl Workspace {
@@ -121,6 +129,8 @@ impl Workspace {
                 end,
                 body: String::new(),
                 code,
+                on_commits: pane == DiffPane::History,
+                outdated: false,
             },
             input,
         });
@@ -136,6 +146,7 @@ impl Workspace {
         let body = draft.input.read(cx).value().trim().to_owned();
         if !body.is_empty() {
             self.notes.add(Note { body, ..draft.note });
+            self.place_history_notes();
         }
         self.focus_diff(window, cx);
         cx.notify();
@@ -149,7 +160,40 @@ impl Workspace {
 
     fn delete_note(&mut self, id: u64, cx: &mut Context<Self>) {
         self.notes.remove(id);
+        self.place_history_notes();
         cx.notify();
+    }
+
+    /// Moves notes after the working tree's changes, or marks them outdated.
+    pub(super) fn follow_notes(&mut self) {
+        let hidden = self.hidden_paths();
+        self.notes
+            .follow(&self.all_patch, &|path| hidden.contains(path));
+    }
+
+    /// Where notes sit in the History diff: wherever their code shows there.
+    pub(super) fn place_history_notes(&mut self) {
+        self.history_note_places = self
+            .notes
+            .items()
+            .iter()
+            .filter_map(|note| Some((note.id, note.find_in(&self.history_patch)?.1)))
+            .collect();
+    }
+
+    /// Where `note` shows in `pane`'s diff: on a line, with its file when its
+    /// code is gone, or not at all.
+    fn note_place(&self, note: &Note, pane: DiffPane) -> Option<NotePlace> {
+        match pane {
+            DiffPane::Changes if note.on_commits => None,
+            DiffPane::Changes if note.outdated => Some(NotePlace::File),
+            DiffPane::Changes => Some(NotePlace::Line(note.end)),
+            DiffPane::History => self
+                .history_note_places
+                .iter()
+                .find(|(id, _)| *id == note.id)
+                .map(|(_, line)| NotePlace::Line(*line)),
+        }
     }
 
     /// Copies every note, and the pull request's open review threads, as one
@@ -208,11 +252,12 @@ impl Workspace {
             .notes
             .items()
             .iter()
-            .map(|note| {
-                (
+            .filter_map(|note| {
+                let place = self.note_place(note, pane)?;
+                Some((
                     ElementId::from(format!("note-{}", note.id)),
-                    Item::Note(note.clone()),
-                )
+                    Item::Note(note.clone(), place),
+                ))
             })
             .collect();
         if pane == DiffPane::History && self.shows_pull_request() {
@@ -226,10 +271,13 @@ impl Workspace {
         let annotations: Vec<DiffAnnotation> = items
             .iter()
             .map(|(id, item)| match item {
-                Item::Note(note) => DiffAnnotation::line(
+                Item::Note(note, NotePlace::Line(line)) => DiffAnnotation::line(
                     id.clone(),
-                    DiffLinePosition::new(note.path.clone(), side(note.old_side), note.end),
+                    DiffLinePosition::new(note.path.clone(), side(note.old_side), *line),
                 ),
+                Item::Note(note, NotePlace::File) => {
+                    DiffAnnotation::file(id.clone(), note.path.clone())
+                }
                 Item::Thread(thread) => match thread.line {
                     Some(line) => DiffAnnotation::line(
                         id.clone(),
@@ -253,7 +301,7 @@ impl Workspace {
                     return div().into_any_element();
                 };
                 match item {
-                    Item::Note(note) => render_note(note, &owner, cx),
+                    Item::Note(note, _) => render_note(note, &owner, cx),
                     Item::Thread(thread) => render_thread(thread, cx),
                 }
             })
@@ -349,7 +397,12 @@ impl Workspace {
         }
         let mut parts = Vec::new();
         if !self.notes.is_empty() {
-            parts.push(super::history::count(self.notes.len(), "note"));
+            let mut notes = super::history::count(self.notes.len(), "note");
+            let outdated = self.notes.outdated();
+            if outdated > 0 {
+                notes.push_str(&format!(" ({outdated} outdated)"));
+            }
+            parts.push(notes);
         }
         if open_threads > 0 {
             parts.push(super::history::count(open_threads, "open PR thread"));
@@ -425,14 +478,23 @@ fn render_note(
     cx: &mut gpui_kit::App,
 ) -> AnyElement {
     let (owner, id) = (owner.clone(), note.id);
+    let muted = cx.theme().muted_foreground;
     card(cx)
         .child(
             h_flex()
                 .gap_2()
                 .text_xs()
-                .text_color(cx.theme().muted_foreground)
+                .text_color(muted)
                 .child(Icon::empty().path("icons/square-pen.svg").xsmall())
-                .child(div().flex_1().child("Your note"))
+                .child(div().child("Your note"))
+                .when(note.outdated, |this| {
+                    this.child(
+                        div()
+                            .text_color(cx.theme().warning)
+                            .child(format!("Outdated · was line {}", note.end)),
+                    )
+                })
+                .child(div().flex_1())
                 .child(
                     Button::new(ElementId::from(format!("delete-note-{id}")))
                         .ghost()
@@ -444,6 +506,21 @@ fn render_note(
                         }),
                 ),
         )
+        // An outdated note quotes what it was about, since the diff no
+        // longer shows it.
+        .when(note.outdated && !note.code.is_empty(), |this| {
+            this.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(cx.theme().secondary)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .text_color(muted)
+                    .children(note.code.iter().map(|line| div().child(line.clone()))),
+            )
+        })
         .child(div().text_sm().child(note.body.clone()))
         .into_any_element()
 }

@@ -46,6 +46,7 @@ impl Workspace {
                     Ok((patch, files)) => {
                         if patch != this.all_patch {
                             this.all_patch = patch;
+                            this.follow_notes();
                             this.all_diff
                                 .update(cx, |diff, cx| diff.set_files(files, cx));
                             this.schedule_relayout(cx);

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yin_git::ReviewThread;
+use yin_git::{FilePatch, ReviewThread, Side};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Note {
@@ -17,6 +17,13 @@ pub struct Note {
     pub body: String,
     /// The lines the note is about, as they read when it was written.
     pub code: Vec<String>,
+    /// Written on commits in History rather than on the working tree's
+    /// changes, so the working tree can't make it outdated.
+    #[serde(default)]
+    pub on_commits: bool,
+    /// Its code is no longer among the working tree's changes.
+    #[serde(default)]
+    pub outdated: bool,
 }
 
 impl Note {
@@ -33,6 +40,21 @@ impl Note {
             ""
         };
         format!("{}:{lines}{deleted}", self.path)
+    }
+
+    fn side(&self) -> Side {
+        if self.old_side { Side::Old } else { Side::New }
+    }
+
+    /// Where the note's code is in `patch` now, as (start, end) lines: the
+    /// occurrence nearest where it was. `None` when the code isn't there.
+    pub fn find_in(&self, patch: &str) -> Option<(usize, usize)> {
+        let file = FilePatch::of_file(patch, &self.path, self.side())?;
+        let start = file
+            .find_lines(self.side(), &self.code)
+            .into_iter()
+            .min_by_key(|start| start.abs_diff(self.start))?;
+        Some((start, start + self.code.len() - 1))
     }
 }
 
@@ -100,6 +122,33 @@ impl Notes {
         self.items.clear();
         self.save();
     }
+
+    pub fn outdated(&self) -> usize {
+        self.items.iter().filter(|note| note.outdated).count()
+    }
+
+    /// Follows the working tree's changes in `patch`: a note whose code moved
+    /// moves with it, and one whose code is gone is outdated. Files in
+    /// `hidden` were left out of the patch, so their notes stay as they are.
+    pub fn follow(&mut self, patch: &str, hidden: &dyn Fn(&str) -> bool) {
+        let mut changed = false;
+        for note in &mut self.items {
+            if note.on_commits || note.code.is_empty() || hidden(&note.path) {
+                continue;
+            }
+            let (start, end, outdated) = match note.find_in(patch) {
+                Some((start, end)) => (start, end, false),
+                None => (note.start, note.end, true),
+            };
+            if (start, end, outdated) != (note.start, note.end, note.outdated) {
+                (note.start, note.end, note.outdated) = (start, end, outdated);
+                changed = true;
+            }
+        }
+        if changed {
+            self.save();
+        }
+    }
 }
 
 /// One prompt asking an agent to address `notes` and the open review
@@ -113,7 +162,12 @@ pub fn prompt(notes: &[Note], threads: &[ReviewThread]) -> String {
     let mut n = 0;
     for note in notes {
         n += 1;
-        out.push_str(&format!("\n{n}. {}\n", note.location()));
+        let outdated = if note.outdated {
+            " (outdated: this code has changed since the note was written)"
+        } else {
+            ""
+        };
+        out.push_str(&format!("\n{n}. {}{outdated}\n", note.location()));
         push_code(&mut out, &note.path, &note.code);
         push_body(&mut out, &note.body);
     }
@@ -166,7 +220,48 @@ mod tests {
             end,
             body: body.into(),
             code: vec!["let x = 1;".into()],
+            on_commits: false,
+            outdated: false,
         }
+    }
+
+    #[test]
+    fn notes_follow_their_code_or_go_outdated() {
+        let patch = |body: &str| {
+            format!("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,3 @@\n{body}")
+        };
+        let mut notes = Notes::default();
+        notes.add(note("a.rs", 2, 2, "moves"));
+        notes.add(Note {
+            code: vec!["gone".into()],
+            ..note("a.rs", 3, 3, "goes")
+        });
+        notes.add(Note {
+            on_commits: true,
+            code: vec!["elsewhere".into()],
+            ..note("a.rs", 1, 1, "history")
+        });
+        notes.add(Note {
+            code: vec!["gone".into()],
+            ..note("hidden.rs", 1, 1, "reviewed and hidden")
+        });
+        // The agent added two lines above `let x = 1;` and removed `gone`.
+        notes.follow(&patch(" top\n+a\n+b\n+let x = 1;\n"), &|path| {
+            path == "hidden.rs"
+        });
+        let items = notes.items();
+        assert_eq!(
+            (items[0].start, items[0].end, items[0].outdated),
+            (4, 4, false)
+        );
+        assert!(items[1].outdated);
+        assert!(!items[2].outdated, "notes on commits aren't checked");
+        assert!(
+            !items[3].outdated,
+            "hidden files keep their notes as they were"
+        );
+        assert_eq!(notes.outdated(), 1);
+        assert!(prompt(notes.items(), &[]).contains("3 (outdated: this code has changed"));
     }
 
     #[test]

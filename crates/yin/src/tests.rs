@@ -500,3 +500,57 @@ fn writes_a_review_note_and_copies_it_as_a_prompt(cx: &mut TestAppContext) {
     assert!(copied.contains("1. f.txt:5\n"), "{copied}");
     assert!(copied.contains("line five") && copied.contains("Spell numbers as digits"));
 }
+
+#[gpui_kit::test]
+fn notes_follow_agent_edits_and_go_outdated(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(path, &["config", "user.name", "Yin Test"]);
+    git(path, &["config", "user.email", "yin@example.com"]);
+    std::fs::write(path.join("f.txt"), numbered(1..=10)).unwrap();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "initial"]);
+    let edited = numbered(1..=10).replace("line 5\n", "line five\n");
+    std::fs::write(path.join("f.txt"), &edited).unwrap();
+
+    let (window, workspace) = open(cx, Repository::open(path).unwrap());
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let diff = workspace.read(cx).diff_state();
+        diff.update(cx, |diff, cx| {
+            diff.set_selected_lines(
+                Some(DiffLineRange::new("f.txt", DiffSide::Modified, 5, 5)),
+                cx,
+            )
+        });
+    });
+    let act = |cx: &mut TestAppContext, action: Box<dyn gpui_kit::Action>| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    act(cx, actions::AddNote.boxed_clone());
+    cx.update_window(window.into(), |_, window, cx| {
+        window.input("Use a digit", cx);
+        window.press("cmd-enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // The agent adds two lines above: the note moves down with its line.
+    std::fs::write(path.join("f.txt"), format!("new a\nnew b\n{edited}")).unwrap();
+    act(cx, actions::Refresh.boxed_clone());
+    cx.update(|cx| {
+        let note = &workspace.read(cx).notes()[0];
+        assert_eq!((note.start, note.end, note.outdated), (7, 7, false));
+    });
+
+    // The agent rewrites the line: the note is outdated.
+    std::fs::write(path.join("f.txt"), numbered(1..=10).replace("line 5\n", "line 5!\n")).unwrap();
+    act(cx, actions::Refresh.boxed_clone());
+    cx.update(|cx| assert!(workspace.read(cx).notes()[0].outdated));
+}
