@@ -282,6 +282,9 @@ pub struct Workspace {
     blame: Option<(String, Arc<Vec<yin_git::BlameLine>>)>,
     files: Arc<Vec<String>>,
     files_loaded: bool,
+    /// The status paths that add, remove or move files, when the tree was
+    /// last scanned: edits alone don't change the tree, so they don't rescan.
+    tree_shape: Option<Vec<String>>,
     file_tree: Entity<gpui_kit::component::tree::TreeState>,
     expanded_dirs: std::collections::HashSet<String>,
     tree_decorations: Arc<files::TreeDecorations>,
@@ -406,6 +409,7 @@ impl Workspace {
             blame: None,
             files: Arc::default(),
             files_loaded: false,
+            tree_shape: None,
             file_tree: Self::new_file_tree(cx),
             expanded_dirs: Default::default(),
             tree_decorations: Arc::default(),
@@ -469,8 +473,10 @@ impl Workspace {
         self._watcher = Some(watcher);
         self._watch_task = cx.spawn_in(window, async move |this, cx| {
             while events.recv().await.is_ok() {
+                // Long enough that an agent writing steadily costs a few
+                // refreshes a second, short enough to feel live.
                 cx.background_executor()
-                    .timer(Duration::from_millis(100))
+                    .timer(Duration::from_millis(300))
                     .await;
                 while events.try_recv().is_ok() {}
                 let refreshed = this.update_in(cx, |this, window, cx| {
@@ -628,9 +634,11 @@ impl Workspace {
             self.load_history(cx);
         }
         self.update_tree_decorations();
-        if self.files_loaded {
+        let shape = tree_shape(&self.status);
+        if self.files_loaded && self.tree_shape.as_ref() != Some(&shape) {
             self.load_files(cx);
         }
+        self.tree_shape = Some(shape);
         // Reload even when the selection is unchanged: the file may have changed.
         self.load_diff(cx);
     }
@@ -663,9 +671,18 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Loads the selected conflict or stash for the main pane; other rows
+    /// show in the changes diff, so building their diff here would be waste.
     fn load_diff(&mut self, cx: &mut Context<Self>) {
         self.diff_generation += 1;
         let generation = self.diff_generation;
+        if !self.shows_one_file() {
+            if self.diff_key.take().is_some() {
+                self.diff_patch.clear();
+                self.diff.update(cx, |state, cx| state.set_files([], cx));
+            }
+            return;
+        }
         let Some(key) = self.selected_key() else {
             self.diff_key = None;
             self.diff_patch.clear();
@@ -1241,6 +1258,25 @@ impl Workspace {
     }
 }
 
+/// Paths whose status means a file appeared, disappeared or moved.
+fn tree_shape(status: &Status) -> Vec<String> {
+    let moved = |change: Change| {
+        matches!(
+            change,
+            Change::Added | Change::Deleted | Change::Renamed | Change::Copied
+        )
+    };
+    status
+        .entries
+        .iter()
+        .filter(|entry| match entry.status {
+            yin_git::FileStatus::Tracked { index, worktree } => moved(index) || moved(worktree),
+            yin_git::FileStatus::Untracked | yin_git::FileStatus::Conflicted => true,
+        })
+        .map(|entry| entry.path.clone())
+        .collect()
+}
+
 /// An icon in front of a sidebar tab's label.
 fn tab_icon(icon: Icon, cx: &App) -> impl IntoElement {
     div()
@@ -1413,7 +1449,10 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
+            .on_action(cx.listener(|this, _: &Refresh, _, cx| {
+                this.tree_shape = None;
+                this.refresh(cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
                 this.sidebar_visible = !this.sidebar_visible;
                 if !this.sidebar_visible {

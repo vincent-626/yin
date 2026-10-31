@@ -234,5 +234,10 @@ Each bullet is roughly one commit. A phase ends with something usable.
   VS Code's process per window: yin runs no third-party code, and language
   servers are already separate processes. The global hotkey is Carbon's
   `RegisterEventHotKey`, which needs no Accessibility permission.
+- 2026-10-31 — Refreshes wait for 300 ms of quiet, build the single-file diff
+  only for conflicts and stashes, and rescan the tree only when files appear,
+  disappear or move. The Diff component compiles each language's highlight
+  query on every update; that's upstream, so yin updates it less often. An
+  agent writing steadily went from about 32% CPU to 13%.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.
