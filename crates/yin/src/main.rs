@@ -110,9 +110,7 @@ fn main() {
 /// From anywhere: yin comes forward with the repository switcher open in its
 /// frontmost window, or a new window when none is open.
 fn show_switcher(cx: &mut App) {
-    if windows::frontmost(cx).is_none() {
-        windows::open(None, cx);
-    }
+    windows::ensure_window(cx);
     let Some((shell, window)) = windows::frontmost(cx) else {
         return;
     };

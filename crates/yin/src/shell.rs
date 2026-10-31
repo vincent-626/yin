@@ -119,13 +119,6 @@ impl Shell {
         this
     }
 
-    /// The repository this window shows, if any.
-    pub fn workdir(&self, cx: &App) -> Option<PathBuf> {
-        self.workspace
-            .as_ref()
-            .map(|workspace| workspace.read(cx).workdir().to_owned())
-    }
-
     pub fn unsaved_files(&self, cx: &App) -> Vec<String> {
         self.workspace
             .as_ref()
@@ -142,6 +135,7 @@ impl Shell {
     pub fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
         self.save_session(cx);
         state::remember_repo(repo.workdir());
+        windows::set_workdir(window.window_handle(), repo.workdir(), cx);
         let workspace = cx.new(|cx| Workspace::new(repo, window, cx));
         cx.subscribe_in(
             &workspace,

@@ -13,42 +13,61 @@ use yin_git::Repository;
 use crate::shell::{self, Shell};
 use crate::state;
 
-/// Every window's Shell, most recently active first.
+/// Every window, most recently active first. Each keeps its repository here
+/// so finding one never reads a Shell, which may be mid-update: the switcher
+/// asks from inside its own window's Shell.
 #[derive(Default)]
-struct Windows(Vec<(WeakEntity<Shell>, AnyWindowHandle)>);
+struct Windows(Vec<Entry>);
+
+#[derive(Clone)]
+struct Entry {
+    shell: WeakEntity<Shell>,
+    window: AnyWindowHandle,
+    workdir: Option<PathBuf>,
+}
 
 impl Global for Windows {}
 
 /// Adds a new window, in front.
 pub fn register(shell: WeakEntity<Shell>, window: AnyWindowHandle, cx: &mut App) {
-    cx.default_global::<Windows>().0.insert(0, (shell, window));
+    let entry = Entry {
+        shell,
+        window,
+        workdir: None,
+    };
+    cx.default_global::<Windows>().0.insert(0, entry);
+}
+
+/// Records which repository `window` shows.
+pub fn set_workdir(window: AnyWindowHandle, workdir: &Path, cx: &mut App) {
+    let windows = &mut cx.default_global::<Windows>().0;
+    if let Some(entry) = windows.iter_mut().find(|entry| entry.window == window) {
+        entry.workdir = Some(workdir.to_owned());
+    }
 }
 
 /// Moves `window` to the front, when it becomes active.
 pub fn touch(window: AnyWindowHandle, cx: &mut App) {
     let windows = &mut cx.default_global::<Windows>().0;
-    if let Some(ix) = windows.iter().position(|(_, handle)| *handle == window) {
+    if let Some(ix) = windows.iter().position(|entry| entry.window == window) {
         let entry = windows.remove(ix);
         windows.insert(0, entry);
     }
 }
 
 /// The windows still open, most recently active first.
-fn live(cx: &mut App) -> Vec<(Entity<Shell>, AnyWindowHandle)> {
+fn live(cx: &mut App) -> Vec<Entry> {
     let open = cx.windows();
     let windows = &mut cx.default_global::<Windows>().0;
-    windows.retain(|(shell, handle)| shell.upgrade().is_some() && open.contains(handle));
-    windows
-        .iter()
-        .filter_map(|(shell, handle)| Some((shell.upgrade()?, *handle)))
-        .collect()
+    windows.retain(|entry| entry.shell.upgrade().is_some() && open.contains(&entry.window));
+    windows.clone()
 }
 
 /// The repositories that have a window.
 pub fn open_repos(cx: &mut App) -> Vec<PathBuf> {
     live(cx)
         .into_iter()
-        .filter_map(|(shell, _)| shell.read(cx).workdir(cx))
+        .filter_map(|entry| entry.workdir)
         .collect()
 }
 
@@ -56,18 +75,18 @@ pub fn open_repos(cx: &mut App) -> Vec<PathBuf> {
 pub fn frontmost(cx: &mut App) -> Option<(Entity<Shell>, AnyWindowHandle)> {
     let windows = live(cx);
     let active = cx.active_window();
-    windows
+    let entry = windows
         .iter()
-        .find(|(_, handle)| Some(*handle) == active)
-        .or(windows.first())
-        .cloned()
+        .find(|entry| Some(entry.window) == active)
+        .or(windows.first())?;
+    Some((entry.shell.upgrade()?, entry.window))
 }
 
 fn find(workdir: &Path, cx: &mut App) -> Option<AnyWindowHandle> {
     live(cx)
         .into_iter()
-        .find(|(shell, _)| shell.read(cx).workdir(cx).as_deref() == Some(workdir))
-        .map(|(_, handle)| handle)
+        .find(|entry| entry.workdir.as_deref() == Some(workdir))
+        .map(|entry| entry.window)
 }
 
 fn activate(window: AnyWindowHandle, cx: &mut App) {
@@ -79,7 +98,14 @@ fn activate(window: AnyWindowHandle, cx: &mut App) {
 
 /// Shows `path`'s repository: its window if it has one, else the welcome
 /// window if one is open, else a new window. `None` opens a welcome window.
+///
+/// Runs once the current event is handled: callers are often inside a
+/// window or Shell update, which this needs to make itself.
 pub fn open(path: Option<PathBuf>, cx: &mut App) {
+    cx.defer(move |cx| open_now(path, cx));
+}
+
+fn open_now(path: Option<PathBuf>, cx: &mut App) {
     let repo = match path.map(|path| Repository::open(&path)).transpose() {
         Ok(repo) => repo,
         Err(error) => return show_error(error.to_string(), cx),
@@ -93,7 +119,8 @@ pub fn open(path: Option<PathBuf>, cx: &mut App) {
     }
     let welcome = live(cx)
         .into_iter()
-        .find(|(shell, _)| shell.read(cx).workdir(cx).is_none());
+        .find(|entry| entry.workdir.is_none())
+        .and_then(|entry| Some((entry.shell.upgrade()?, entry.window)));
     if let Some((shell, window)) = welcome {
         window
             .update(cx, |_, window, cx| {
@@ -103,6 +130,13 @@ pub fn open(path: Option<PathBuf>, cx: &mut App) {
         return activate(window, cx);
     }
     open_window(Some(repo), cx);
+}
+
+/// Opens a welcome window now when no window is open.
+pub fn ensure_window(cx: &mut App) {
+    if live(cx).is_empty() {
+        open_window(None, cx);
+    }
 }
 
 /// At launch, or when the Dock icon is clicked with no windows open: the
@@ -154,11 +188,14 @@ pub fn quit(cx: &mut App) {
     let windows = live(cx);
     let mut unsaved = Vec::new();
     let mut ask_in = None;
-    for (shell, handle) in &windows {
+    for entry in &windows {
+        let Some(shell) = entry.shell.upgrade() else {
+            continue;
+        };
         shell.read(cx).save_session(cx);
         let files = shell.read(cx).unsaved_files(cx);
         if !files.is_empty() {
-            ask_in.get_or_insert(*handle);
+            ask_in.get_or_insert(entry.window);
             unsaved.extend(files);
         }
     }

@@ -335,3 +335,34 @@ fn one_window_per_repository(cx: &mut TestAppContext) {
     let repos = cx.update(crate::windows::open_repos);
     assert_eq!(repos.len(), 2);
 }
+
+#[gpui_kit::test]
+fn switcher_and_welcome_open_repositories(cx: &mut TestAppContext) {
+    let (a, b) = (fixture(), fixture());
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::shell::init(cx);
+        workspace::init(cx);
+    });
+    cx.update(|cx| crate::windows::open(Some(a.path().to_owned()), cx));
+    cx.run_until_parked();
+    // The switcher opens from inside its window's Shell.
+    let window = cx.update(|cx| cx.windows()[0]);
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_action(crate::shell::SwitchRepository.boxed_clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // A welcome window takes the repository picked from it.
+    cx.update(|cx| crate::windows::open(None, cx));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    let welcome = cx.update(crate::windows::frontmost).unwrap().1;
+    let path = b.path().to_owned();
+    cx.update_window(welcome, |_, _, cx| crate::windows::open(Some(path), cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    assert_eq!(cx.update(crate::windows::open_repos).len(), 2);
+}
