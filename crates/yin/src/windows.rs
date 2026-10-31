@@ -105,7 +105,9 @@ pub fn open(path: Option<PathBuf>, cx: &mut App) {
     cx.defer(move |cx| open_now(path, cx));
 }
 
-fn open_now(path: Option<PathBuf>, cx: &mut App) {
+/// Opens straight away; for callers outside any update, such as launch,
+/// where a deferred open would wait for the next event.
+pub fn open_now(path: Option<PathBuf>, cx: &mut App) {
     let repo = match path.map(|path| Repository::open(&path)).transpose() {
         Ok(repo) => repo,
         Err(error) => return show_error(error.to_string(), cx),

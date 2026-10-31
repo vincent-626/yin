@@ -66,7 +66,7 @@ fn main() {
         .detach();
 
         match argument {
-            Some(path) => windows::open(Some(path), cx),
+            Some(path) => windows::open_now(Some(path), cx),
             // `open -a yin <folder>` launches with no arguments and delivers
             // the folder just after; give it a moment before opening the
             // usual window.
