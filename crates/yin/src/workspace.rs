@@ -128,7 +128,7 @@ impl Panel {
         Self::ALL.into_iter().find(|panel| panel.name() == name)
     }
 
-    const ALL: [Panel; 4] = [Panel::Changes, Panel::History, Panel::Files, Panel::Search];
+    const ALL: [Panel; 4] = [Panel::Files, Panel::Changes, Panel::History, Panel::Search];
 
     fn index(self) -> usize {
         Self::ALL
@@ -177,9 +177,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-alt-w", SwitchWorktree, Some("Workspace")),
         KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
-        KeyBinding::new("cmd-1", ShowChanges, Some("Workspace")),
-        KeyBinding::new("cmd-2", ShowHistory, Some("Workspace")),
-        KeyBinding::new("cmd-3", ShowFiles, Some("Workspace")),
+        KeyBinding::new("cmd-1", ShowFiles, Some("Workspace")),
+        KeyBinding::new("cmd-2", ShowChanges, Some("Workspace")),
+        KeyBinding::new("cmd-3", ShowHistory, Some("Workspace")),
         KeyBinding::new("cmd-shift-e", ShowFiles, Some("Workspace")),
         KeyBinding::new("cmd-w", CloseFile, Some("Workspace")),
         KeyBinding::new("cmd-s", SaveFile, Some("Workspace")),
@@ -991,6 +991,11 @@ impl Workspace {
                     }))
                     .child(
                         Tab::new()
+                            .prefix(tab_icon(Icon::empty().path("icons/folder.svg"), cx))
+                            .label("Files"),
+                    )
+                    .child(
+                        Tab::new()
                             .prefix(tab_icon(Icon::empty().path("icons/file-diff.svg"), cx))
                             .label("Changes")
                             .when(!self.status.entries.is_empty(), |tab| {
@@ -1006,11 +1011,6 @@ impl Workspace {
                         Tab::new()
                             .prefix(tab_icon(Icon::empty().path("icons/git-graph.svg"), cx))
                             .label("History"),
-                    )
-                    .child(
-                        Tab::new()
-                            .prefix(tab_icon(Icon::empty().path("icons/folder.svg"), cx))
-                            .label("Files"),
                     )
                     .child(
                         Tab::new()

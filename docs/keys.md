@@ -9,7 +9,7 @@ current key.
 |---|---|
 | `cmd-shift-p` | Command palette |
 | `cmd-o` | Open a repository |
-| `cmd-1` / `cmd-2` / `cmd-3` | Changes / History / Files |
+| `cmd-1` / `cmd-2` / `cmd-3` | Files / Changes / History |
 | `cmd-p` | Go to file |
 | `cmd-shift-f` | Search the project |
 | `cmd-enter` | Commit staged changes |

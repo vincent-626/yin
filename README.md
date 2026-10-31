@@ -67,7 +67,7 @@ them when it finds them and says so when it doesn't.
 
 yin opens on the **Changes** tab. Move with `j`/`k`, stage with `space`, press
 `c` to write a message and `cmd-enter` to commit. Every git action is in the
-bar above the commit box. `cmd-1` to `cmd-3` switch between Changes, History and Files;
+bar above the commit box. `cmd-1` to `cmd-3` switch between Files, Changes and History;
 `cmd-p` finds a file and `cmd-shift-f` searches the project.
 
 Everything else is in the command palette (`cmd-shift-p`) and in
