@@ -77,6 +77,11 @@ panics on wakeups from other threads.
   doesn't schedule a frame. `Workspace::schedule_relayout` redraws twice
   after resizes and new diffs; keep calling it if you add another Diff.
 - A plain `div()` root around flex children can mis-size them; use `v_flex()`.
+- The Diff recompiles each language's highlight query on every update (about
+  7% of a core while an agent writes). `DiffState::set_syntax_highlighter`
+  can't fix it from yin without changing output: the public path highlights
+  injected languages and merges overlaps differently. The fix is upstream:
+  keep `SyntaxHighlighters` across updates in `ensure_presentation`.
 
 ## Toolchain
 
