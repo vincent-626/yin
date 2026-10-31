@@ -121,6 +121,34 @@ impl FilePatch {
         Ok(Self { header, hunks })
     }
 
+    /// The text of lines `start..=end` on `side`, such as a reviewer's
+    /// selection, from `patch`, which may hold many files.
+    pub fn lines_in(patch: &str, path: &str, side: Side, start: usize, end: usize) -> Vec<String> {
+        let marker = match side {
+            Side::Old => format!("--- a/{path}"),
+            Side::New => format!("+++ b/{path}"),
+        };
+        let Some(section) = patch
+            .split("diff --git ")
+            .find(|section| section.lines().any(|line| line == marker))
+        else {
+            return Vec::new();
+        };
+        let Ok(file) = Self::parse(&format!("diff --git {section}")) else {
+            return Vec::new();
+        };
+        file.rows()
+            .filter(|row| {
+                let line = match side {
+                    Side::Old => row.old_line,
+                    Side::New => row.new_line,
+                };
+                line.is_some_and(|line| (start..=end).contains(&line))
+            })
+            .map(|row| row.text.clone())
+            .collect()
+    }
+
     pub fn rows(&self) -> impl Iterator<Item = &Row> {
         self.hunks.iter().flat_map(|hunk| &hunk.rows)
     }

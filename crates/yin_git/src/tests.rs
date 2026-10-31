@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use super::*;
@@ -785,4 +786,137 @@ fn unstages_an_addition_that_moved_lines() {
         .unwrap();
     assert_eq!(outcome, PartialStage::Unstaged);
     assert_eq!(fx.repo.diff("f.txt", DiffTarget::Staged).unwrap(), "");
+}
+
+impl Fixture {
+    fn commit(&self, path: &str, contents: &str, message: &str) {
+        self.write(path, contents);
+        self.repo.stage(&[path]).unwrap();
+        self.repo.commit(message, false).unwrap();
+    }
+}
+
+#[test]
+fn diffs_a_run_of_commits_and_a_branch_against_its_base() {
+    let fx = Fixture::new();
+    fx.commit("a.txt", "one\n", "first");
+    fx.commit("a.txt", "one\ntwo\n", "second");
+    fx.commit("b.txt", "bee\n", "third");
+    let log = fx.repo.log(10).unwrap();
+    let (newest, oldest) = (&log[0].oid, &log[2].oid);
+    // From the root: everything, against the empty tree.
+    let patch = fx.repo.commits_patch(oldest, newest, None).unwrap();
+    assert!(patch.contains("+one") && patch.contains("+two") && patch.contains("+bee"));
+    // The last two only.
+    let patch = fx.repo.commits_patch(&log[1].oid, newest, None).unwrap();
+    assert!(!patch.contains("+one") && patch.contains("+two") && patch.contains("+bee"));
+    let patch = fx
+        .repo
+        .commits_patch(&log[1].oid, newest, Some("b.txt"))
+        .unwrap();
+    assert!(!patch.contains("+two") && patch.contains("+bee"));
+
+    fx.repo.create_branch("feature").unwrap();
+    fx.commit("c.txt", "sea\n", "on feature");
+    // main moves on; the comparison is from where feature left it.
+    fx.repo.git(["switch", "main"]).unwrap();
+    fx.commit("d.txt", "dee\n", "on main");
+    let patch = fx.repo.compare_patch("main", "feature", None).unwrap();
+    assert!(patch.contains("+sea") && !patch.contains("dee"));
+    let commits = fx.repo.log_range("main", "feature", 10).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].subject, "on feature");
+}
+
+#[test]
+fn finds_the_stack_of_branches() {
+    let fx = Fixture::new();
+    fx.commit("a.txt", "a\n", "base");
+    assert_eq!(fx.repo.trunk().as_deref(), Some("main"));
+    assert_eq!(fx.repo.stack().unwrap(), None, "trunk has no stack");
+    fx.repo.create_branch("one").unwrap();
+    fx.commit("b.txt", "b\n", "one a");
+    fx.commit("b.txt", "bb\n", "one b");
+    fx.repo.create_branch("two").unwrap();
+    fx.commit("c.txt", "c\n", "two a");
+    fx.repo.create_branch("three").unwrap();
+    fx.commit("d.txt", "d\n", "three a");
+    // A sibling of three, also on two.
+    fx.repo.git(["switch", "-c", "side", "two"]).unwrap();
+    fx.commit("e.txt", "e\n", "side a");
+    fx.commit("e.txt", "ee\n", "side b");
+    fx.repo.git(["switch", "two"]).unwrap();
+
+    let stack = fx.repo.stack().unwrap().unwrap();
+    assert_eq!(stack.trunk, "main");
+    let layers: Vec<(&str, &str, usize, bool)> = stack
+        .layers
+        .iter()
+        .map(|l| (l.branch.as_str(), l.base.as_str(), l.commits, l.is_head))
+        .collect();
+    assert_eq!(
+        layers,
+        [
+            ("one", "main", 2, false),
+            ("two", "one", 1, true),
+            ("three", "two", 1, false),
+        ]
+    );
+    assert_eq!(stack.head().unwrap().branch, "two");
+}
+
+#[test]
+fn reads_lines_out_of_a_multi_file_patch() {
+    let patch = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n\
+                 diff --git a/y.rs b/y.rs\n--- a/y.rs\n+++ b/y.rs\n@@ -5,1 +5,2 @@\n five\n+six\n";
+    assert_eq!(
+        FilePatch::lines_in(patch, "y.rs", Side::New, 5, 6),
+        ["five", "six"]
+    );
+    assert_eq!(FilePatch::lines_in(patch, "x.rs", Side::Old, 2, 2), ["b"]);
+    assert!(FilePatch::lines_in(patch, "z.rs", Side::New, 1, 1).is_empty());
+}
+
+/// A stand-in `gh` that logs its arguments and answers like the real one.
+fn fake_gh(dir: &Path, script: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let gh = dir.join("gh");
+    fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n{script}",
+            dir.join("args").display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    gh
+}
+
+#[test]
+fn opens_and_reads_pull_requests_through_gh() {
+    let fx = Fixture::new();
+    let bin = tempfile::tempdir().unwrap();
+    let gh = fake_gh(
+        bin.path(),
+        "echo 'Creating pull request...'\necho https://github.com/o/r/pull/9\n",
+    );
+    let url = fx
+        .repo
+        .create_pull_request(&gh, "feature", "main", "Add x", "Body\nmore", true)
+        .unwrap();
+    assert_eq!(url, "https://github.com/o/r/pull/9");
+    let args = fs::read_to_string(bin.path().join("args")).unwrap();
+    assert_eq!(
+        args,
+        "pr\ncreate\n--head\nfeature\n--base\nmain\n--title\nAdd x\n--body\nBody\nmore\n--draft\n"
+    );
+
+    let gh = fake_gh(
+        bin.path(),
+        "echo 'no pull requests found for branch \"feature\"' >&2\nexit 1\n",
+    );
+    assert_eq!(fx.repo.pull_request(&gh).unwrap(), None);
+    let gh = fake_gh(bin.path(), "echo 'HTTP 401: Bad credentials' >&2\nexit 1\n");
+    assert!(fx.repo.pull_request(&gh).is_err());
 }

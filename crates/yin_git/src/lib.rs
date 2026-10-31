@@ -3,6 +3,8 @@
 //! Every operation shells out to the `git` CLI so hooks, signing, credential
 //! helpers and config behave exactly as they do in a terminal.
 
+mod compare;
+mod github;
 mod history;
 mod patch;
 mod status;
@@ -14,6 +16,8 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
+pub use compare::{Layer, Stack};
+pub use github::{PullRequest, ReviewComment, ReviewThread};
 pub use history::{BlameLine, BranchRef, Commit, Stash, Worktree};
 pub use patch::{FilePatch, LinePosition, RowKind, Side};
 pub use status::{Branch, Change, FileStatus, Status, StatusEntry};
@@ -312,7 +316,7 @@ impl Repository {
         if self.has_head() {
             "HEAD"
         } else {
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            compare::EMPTY_TREE
         }
     }
 
