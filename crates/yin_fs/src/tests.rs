@@ -204,3 +204,34 @@ fn bench_large_repo() {
         start.elapsed()
     );
 }
+
+#[test]
+fn finds_repositories_without_descending_into_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for repo in [
+        "a",
+        "group/b",
+        "group/deep/too/far",
+        "a/nested",
+        "node_modules/c",
+    ] {
+        std::fs::create_dir_all(root.join(repo).join(".git")).unwrap();
+    }
+    // A linked worktree's `.git` is a file.
+    std::fs::create_dir_all(root.join("wt")).unwrap();
+    std::fs::write(root.join("wt/.git"), "gitdir: elsewhere\n").unwrap();
+    std::fs::create_dir_all(root.join("plain/folder")).unwrap();
+
+    let found = find_repositories(&[root.to_owned()], 2);
+    let names: Vec<_> = found
+        .iter()
+        .map(|path| {
+            path.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(names, ["a", "group/b", "wt"]);
+}

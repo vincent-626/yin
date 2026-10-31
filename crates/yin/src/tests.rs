@@ -308,3 +308,30 @@ fn opens_edits_and_saves_a_file(cx: &mut TestAppContext) {
     );
     cx.update(|cx| assert!(workspace.read(cx).unsaved_files().is_empty()));
 }
+
+#[gpui_kit::test]
+fn one_window_per_repository(cx: &mut TestAppContext) {
+    let (a, b) = (fixture(), fixture());
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::shell::init(cx);
+        workspace::init(cx);
+    });
+    let open = |cx: &mut TestAppContext, path: &Path| {
+        let path = path.to_owned();
+        cx.update(|cx| crate::windows::open(Some(path), cx));
+        cx.run_until_parked();
+    };
+    let windows = |cx: &mut TestAppContext| cx.update(|cx| cx.windows().len());
+
+    open(cx, a.path());
+    assert_eq!(windows(cx), 1);
+    // A subfolder of an open repository finds its window too.
+    std::fs::create_dir(a.path().join("sub")).unwrap();
+    open(cx, &a.path().join("sub"));
+    assert_eq!(windows(cx), 1);
+    open(cx, b.path());
+    assert_eq!(windows(cx), 2);
+    let repos = cx.update(crate::windows::open_repos);
+    assert_eq!(repos.len(), 2);
+}

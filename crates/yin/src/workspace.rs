@@ -505,6 +505,11 @@ impl Workspace {
         });
     }
 
+    /// The repository's working tree.
+    pub fn workdir(&self) -> &std::path::Path {
+        self.repo.workdir()
+    }
+
     #[cfg(test)]
     pub fn selected_path(&self) -> Option<String> {
         self.selected_key().map(|key| key.path)

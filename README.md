@@ -37,6 +37,9 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
   started automatically when installed.
 
 **Everywhere**
+- One window per repository. `cmd-shift-space` from any app brings up a
+  switcher of recent repositories and the ones in your code folders; picking
+  one brings its window forward or opens it.
 - Keyboard first, with a command palette (`cmd-shift-p`) listing every action
   and its key. Keys are customisable.
 - Each repository reopens with its tabs and layout.
@@ -50,7 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/vincent-626/yin/main/script/install
 ```
 
 This installs `yin.app` into `~/Applications` and a `yin` command into
-`~/.local/bin`. Then open a repository:
+`~/.local/bin`, which opens a repository in the running yin, or brings its
+window forward if it's open already:
 
 ```bash
 yin ~/Code/some-repo     # or just `yin` inside one

@@ -187,6 +187,11 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] One review diff: the Changes pane always shows every change against
   HEAD; picking a file scrolls to it, and lines or hunks stage (or unstage, when
   already staged) right there. Conflicts and stashes still show on their own.
+- [x] One app, one window per repository: the `yin` command and the Dock
+  hand folders to the running app (`open -a`), opening a repository again
+  brings its window forward, and windows stay closed without quitting. A
+  repository switcher (`cmd-o`, and `cmd-shift-space` system-wide) lists
+  recent repositories and the ones under the usual code folders.
 - [x] Git bar above the commit box: branch, fetch, pull, push and a menu with
   every other git action. Sidebar tabs restyled (underline, icon and label).
 
@@ -225,5 +230,9 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - 2026-10-31 — Staging from the HEAD diff maps the picked lines through the
   staged and unstaged diffs (`Repository::stage_from_head`): anything unstaged
   stages, otherwise it unstages, as Zed toggles hunks. Replaces the one-file mode.
+- 2026-10-31 — One process with many windows, as Zed and JetBrains do, not
+  VS Code's process per window: yin runs no third-party code, and language
+  servers are already separate processes. The global hotkey is Carbon's
+  `RegisterEventHotKey`, which needs no Accessibility permission.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.

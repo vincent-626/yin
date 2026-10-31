@@ -7,8 +7,10 @@ current key.
 
 | Key | Does |
 |---|---|
+| `cmd-shift-space`, from any app | Bring yin forward with the repository switcher |
 | `cmd-shift-p` | Command palette |
-| `cmd-o` | Open a repository |
+| `cmd-o` | Switch repository: its window if open, else a new one |
+| `cmd-shift-o` | Open a folder from the system dialog |
 | `cmd-1` / `cmd-2` / `cmd-3` | Files / Changes / History |
 | `cmd-p` | Go to file |
 | `cmd-shift-f` | Search the project |
@@ -78,6 +80,14 @@ Bindings in `~/.config/yin/keymap.json` apply over the defaults:
   { "key": "cmd-k", "action": "yin::ShowHistory" },
   { "key": "ctrl-n", "action": "yin::SelectNext", "context": "Changes" }
 ]
+```
+
+The `Global` context is the system-wide switcher key, which works whichever
+app is in front; `"key": "none"` turns it off. macOS lets two apps register
+the same combination, so pick one nothing else uses:
+
+```json
+[{ "key": "ctrl-alt-y", "action": "yin::SwitchRepository", "context": "Global" }]
 ```
 
 Actions are named `yin::<Name>`; the names are listed in

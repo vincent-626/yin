@@ -1,7 +1,8 @@
-//! The working tree as files: scanning, the folder tree, fuzzy path matching
-//! and project search. No UI dependencies.
+//! The working tree as files: scanning, the folder tree, fuzzy path matching,
+//! project search and finding repositories. No UI dependencies.
 
 mod fuzzy;
+mod repos;
 mod search;
 mod tree;
 
@@ -12,6 +13,7 @@ use anyhow::Result;
 use ignore::{WalkBuilder, WalkState};
 
 pub use fuzzy::{PathMatch, match_paths};
+pub use repos::{CODE_FOLDERS, find_repositories};
 pub use search::{SearchMatch, SearchOptions, SearchResults, search};
 pub use tree::{Node, build_tree};
 

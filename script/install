@@ -9,9 +9,10 @@ rm -rf ~/Applications/yin.app
 cp -R "$app" ~/Applications/yin.app
 cat > ~/.local/bin/yin <<'SHIM'
 #!/usr/bin/env bash
-# Open a repository in yin (default: the current directory).
+# Open a repository in yin (default: the current directory). A running yin
+# brings up the repository's window, or opens one.
 target=$(cd "${1:-.}" && pwd)
-exec ~/Applications/yin.app/Contents/MacOS/yin "$target" >/dev/null 2>&1 &
+exec open -a ~/Applications/yin.app "$target"
 SHIM
 chmod +x ~/.local/bin/yin
 echo "Installed ~/Applications/yin.app and ~/.local/bin/yin"

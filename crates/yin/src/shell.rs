@@ -1,48 +1,46 @@
-//! The window's root view: a repository workspace, or the welcome screen.
+//! A window's root view: a repository workspace, or the welcome screen.
+
+mod switcher;
+
+use std::path::PathBuf;
 
 use gpui_kit::component::{
     ActiveTheme as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
+    command::CommandState,
     kbd::Kbd,
     notification::Notification,
     v_flex,
 };
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
-    KeyBinding, Menu, MenuItem, ParentElement as _, PathPromptOptions, Render, Styled as _, Window,
-    div, prelude::FluentBuilder as _,
+    KeyBinding, Menu, MenuItem, ParentElement as _, PathPromptOptions, Render,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use yin_git::Repository;
 
-use crate::state;
 use crate::workspace::{OpenRepository, Workspace};
+use crate::{state, windows};
 
 mod actions {
-    gpui_kit::actions!(yin, [Open, Quit]);
+    gpui_kit::actions!(yin, [Open, Quit, SwitchRepository]);
 }
 pub use actions::*;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-o", Open, None),
+        KeyBinding::new("cmd-o", SwitchRepository, None),
+        KeyBinding::new("cmd-shift-o", Open, None),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
-    // Quit can arrive with focus outside the Shell (an overlay, the menu bar):
-    // route it to the Shell so unsaved edits are still checked.
-    cx.on_action(|_: &Quit, cx| {
-        let Some(ShellHandle(shell, window)) = cx.try_global::<ShellHandle>().cloned() else {
-            return cx.quit();
-        };
-        let routed = window.update(cx, |_, window, cx| {
-            shell.update(cx, |shell, cx| shell.quit(window, cx)).is_ok()
-        });
-        if !matches!(routed, Ok(true)) {
-            cx.quit();
-        }
-    });
+    // Quit can arrive with focus anywhere, or with no window at all.
+    cx.on_action(|_: &Quit, cx| windows::quit(cx));
     cx.set_menus([
         Menu::new("yin").items([MenuItem::action("Quit yin", Quit)]),
-        Menu::new("File").items([MenuItem::action("Open Repository…", Open)]),
+        Menu::new("File").items([
+            MenuItem::action("Switch Repository…", SwitchRepository),
+            MenuItem::action("Open Folder…", Open),
+        ]),
     ]);
 }
 
@@ -52,40 +50,35 @@ pub struct Shell {
     _save_on_quit: gpui_kit::Subscription,
     /// The window's frame, kept current to save on quit.
     frame: Option<state::WindowFrame>,
+    switcher: Entity<CommandState>,
+    /// What the repository switcher offers, recent ones first.
+    switcher_entries: Vec<switcher::Entry>,
+    /// Repositories that appeared on the welcome screen, for clicks.
+    recent: Vec<PathBuf>,
 }
 
-/// The window's Shell, for app-level actions that need it.
-#[derive(Clone)]
-struct ShellHandle(gpui_kit::WeakEntity<Shell>, gpui_kit::AnyWindowHandle);
-
-impl gpui_kit::Global for ShellHandle {}
-
 impl Shell {
-    pub fn new(
-        repo: Option<Repository>,
-        keymap_errors: Vec<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        if !keymap_errors.is_empty() {
-            let message = format!("Keymap problems:\n{}", keymap_errors.join("\n"));
-            window.defer(cx, move |window, cx| {
-                window.push_notification(Notification::warning(message), cx)
-            });
-        }
+    pub fn new(repo: Option<Repository>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
-        let handle = ShellHandle(cx.entity().downgrade(), window.window_handle());
-        cx.set_global(handle);
+        windows::register(cx.entity().downgrade(), window.window_handle(), cx);
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                windows::touch(window.window_handle(), cx);
+            } else if let Some(frame) = this.frame {
+                state::save_window_frame(frame);
+            }
+        })
+        .detach();
         let shell = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let unsaved = shell
                 .read_with(cx, |shell, cx| shell.unsaved_files(cx))
                 .unwrap_or_default();
+            shell.update(cx, |shell, cx| shell.save_session(cx)).ok();
             if unsaved.is_empty() {
-                shell.update(cx, |shell, cx| shell.save_session(cx)).ok();
                 return true;
             }
-            confirm_discard(unsaved, window, cx, |_, cx| cx.quit());
+            confirm_discard(unsaved, window, cx, |window, _| window.remove_window());
             false
         });
         let mut this = Self {
@@ -100,6 +93,9 @@ impl Shell {
                 async {}
             }),
             frame: None,
+            switcher: cx.new(|cx| CommandState::new(window, cx)),
+            switcher_entries: Vec::new(),
+            recent: state::recent_repos(),
         };
         cx.observe_window_bounds(window, |this, window, _| {
             // Fullscreen and maximized frames aren't worth restoring as windows.
@@ -123,32 +119,29 @@ impl Shell {
         this
     }
 
-    fn unsaved_files(&self, cx: &App) -> Vec<String> {
+    /// The repository this window shows, if any.
+    pub fn workdir(&self, cx: &App) -> Option<PathBuf> {
+        self.workspace
+            .as_ref()
+            .map(|workspace| workspace.read(cx).workdir().to_owned())
+    }
+
+    pub fn unsaved_files(&self, cx: &App) -> Vec<String> {
         self.workspace
             .as_ref()
             .map(|workspace| workspace.read(cx).unsaved_files())
             .unwrap_or_default()
     }
 
-    fn save_session(&self, cx: &mut App) {
+    pub fn save_session(&self, cx: &App) {
         if let Some(workspace) = &self.workspace {
             workspace.read(cx).save_session(cx);
         }
     }
 
-    fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
         self.save_session(cx);
-        let unsaved = self.unsaved_files(cx);
-        if unsaved.is_empty() {
-            cx.quit();
-        } else {
-            confirm_discard(unsaved, window, cx, |_, cx| cx.quit());
-        }
-    }
-
-    fn open_repo(&mut self, repo: Repository, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_session(cx);
-        state::save_last_repo(repo.workdir());
+        state::remember_repo(repo.workdir());
         let workspace = cx.new(|cx| Workspace::new(repo, window, cx));
         cx.subscribe_in(
             &workspace,
@@ -162,14 +155,21 @@ impl Shell {
         cx.notify();
     }
 
-    /// Opens `path` in this window, asking first about unsaved edits.
-    fn switch_to(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    /// Shows another worktree of this repository: in its own window if it
+    /// has one, else in this window, asking first about unsaved edits.
+    fn switch_to(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let repo = match Repository::open(&path) {
             Ok(repo) => repo,
             Err(error) => {
                 return window.push_notification(Notification::error(error.to_string()), cx);
             }
         };
+        if windows::open_repos(cx)
+            .iter()
+            .any(|open| open == repo.workdir())
+        {
+            return windows::open(Some(path), cx);
+        }
         let unsaved = self.unsaved_files(cx);
         if unsaved.is_empty() {
             self.open_repo(repo, window, cx);
@@ -183,27 +183,28 @@ impl Shell {
         }
     }
 
-    fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a folder chosen in the system dialog.
+    fn prompt_open(&mut self, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
             prompt: Some("Open".into()),
         });
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |_, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
                 return;
             };
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            this.update_in(cx, |this, window, cx| this.switch_to(path, window, cx))
-                .ok();
+            cx.update(|cx| windows::open(Some(path), cx));
         })
         .detach();
     }
 
     fn render_welcome(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
         v_flex().size_full().child(TitleBar::new()).child(
             v_flex()
                 .flex_1()
@@ -216,22 +217,49 @@ impl Shell {
                         .font_weight(gpui_kit::FontWeight::LIGHT)
                         .child("yin"),
                 )
+                .when(!self.recent.is_empty(), |this| {
+                    this.child(v_flex().w_80().gap_0p5().children(
+                        self.recent.iter().take(8).enumerate().map(|(ix, path)| {
+                            let open = path.clone();
+                            v_flex()
+                                .id(("recent", ix))
+                                .px_3()
+                                .py_1p5()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|this| this.bg(cx.theme().secondary))
+                                .on_click(move |_, _, cx| windows::open(Some(open.clone()), cx))
+                                .child(div().text_sm().child(repo_name(path)))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .truncate()
+                                        .child(state::tilde(path)),
+                                )
+                        }),
+                    ))
+                })
                 .child(
                     Button::new("open")
                         .primary()
                         .label("Open Repository…")
-                        .on_click(cx.listener(|this, _, window, cx| this.prompt_open(window, cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_switcher(window, cx)),
+                        ),
                 )
-                .when_some(Kbd::binding_for_action(&Open, None, window), |this, kbd| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(kbd),
-                    )
-                }),
+                .when_some(
+                    Kbd::binding_for_action(&SwitchRepository, None, window),
+                    |this, kbd| this.child(div().text_xs().text_color(muted).child(kbd)),
+                ),
         )
     }
+}
+
+fn repo_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 impl Render for Shell {
@@ -242,8 +270,12 @@ impl Render for Shell {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .on_action(cx.listener(|this, _: &Open, window, cx| this.prompt_open(window, cx)))
-            .on_action(cx.listener(|this, _: &Quit, window, cx| this.quit(window, cx)))
+            .on_action(cx.listener(|this, _: &Open, _, cx| this.prompt_open(cx)))
+            .on_action(
+                cx.listener(|this, _: &SwitchRepository, window, cx| {
+                    this.open_switcher(window, cx)
+                }),
+            )
             .map(|this| match &self.workspace {
                 Some(workspace) => this.child(workspace.clone()),
                 None => this.child(self.render_welcome(window, cx)),
@@ -252,7 +284,7 @@ impl Render for Shell {
 }
 
 /// Asks before an action that would lose unsaved edits, then runs it.
-fn confirm_discard(
+pub fn confirm_discard(
     unsaved: Vec<String>,
     window: &mut Window,
     cx: &mut App,
