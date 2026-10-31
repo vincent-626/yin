@@ -2,6 +2,7 @@ mod assets;
 mod changes;
 mod hotkey;
 mod keymap;
+mod notes;
 mod review;
 mod shell;
 mod state;

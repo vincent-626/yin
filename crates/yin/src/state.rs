@@ -52,9 +52,14 @@ pub fn save_window_frame(frame: WindowFrame) {
     }
 }
 
-fn session_file(workdir: &Path) -> Option<PathBuf> {
+/// A per-repository file under `kind`, such as `sessions/<hash>.json`.
+pub fn repo_file(kind: &str, workdir: &Path, extension: &str) -> Option<PathBuf> {
     let key = crate::review::content_hash(Some(workdir.as_os_str().as_encoded_bytes()));
-    Some(state_dir()?.join(format!("sessions/{key:016x}.json")))
+    Some(state_dir()?.join(format!("{kind}/{key:016x}.{extension}")))
+}
+
+fn session_file(workdir: &Path) -> Option<PathBuf> {
+    repo_file("sessions", workdir, "json")
 }
 
 pub fn load_session(workdir: &Path) -> Option<Session> {

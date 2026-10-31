@@ -16,6 +16,7 @@ use gpui_kit::{
 };
 use yin_git::FileStatus;
 
+use super::annotations::DiffPane;
 use super::{Section, Workspace, style};
 
 impl Workspace {
@@ -111,7 +112,7 @@ impl Workspace {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .child(div().flex_1().min_h_0().child(
+            .child(div().flex_1().min_h_0().child(self.annotate(
                 Diff::new(&self.all_diff).line_number(true).render_header({
                     let state = self.all_diff.clone();
                     move |file, _, cx| {
@@ -125,8 +126,11 @@ impl Workspace {
                         style::diff_file_header(file, &state, staged, cx)
                     }
                 }),
-            ))
+                DiffPane::Changes,
+                cx,
+            )))
             .children(selection_bar)
+            .children(self.render_note_draft(DiffPane::Changes, window, cx))
             .into_any_element()
     }
 }

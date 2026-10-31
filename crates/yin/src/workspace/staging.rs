@@ -11,7 +11,7 @@ use gpui_kit::{
 };
 use yin_git::{FileStatus, LinePosition, Side};
 
-use super::{Section, StageHunk, StageLines, Workspace};
+use super::{AddNote, Section, StageHunk, StageLines, Workspace};
 
 fn position(side: DiffSide, line: usize) -> LinePosition {
     LinePosition {
@@ -110,6 +110,28 @@ impl Workspace {
             .child(div().text_color(cx.theme().foreground).child(lines))
             .child(hint(&StageLines, "Stage or unstage lines"))
             .child(hint(&StageHunk, "Stage or unstage hunk"))
+            .child(hint(&AddNote, "Note"))
+            .into_any_element()
+    }
+
+    /// The selection hint over commit diffs, where lines can't be staged.
+    pub(super) fn render_note_hint(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .absolute()
+            .bottom_3()
+            .right_4()
+            .h_8()
+            .px_3()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .shadow_md()
+            .bg(cx.theme().popover)
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .children(Kbd::binding_for_action(&AddNote, Some("Diff"), window))
+            .child("Add a review note")
             .into_any_element()
     }
 }

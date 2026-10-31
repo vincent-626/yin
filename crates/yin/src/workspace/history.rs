@@ -1,5 +1,7 @@
 //! The History tab: commits on the current branch, and the selected commit's
-//! message and diff.
+//! message and diff. Shift-selecting a run of commits shows what they changed
+//! together; comparing with a branch lists only this branch's commits and
+//! shows its whole change, the way a pull request would.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,6 +39,36 @@ pub(super) struct CommitDetail {
     selection: TextSelectionHandle,
 }
 
+/// Branches being compared in the History tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Compare {
+    /// What the change is measured from, such as `main`.
+    pub base: String,
+    /// A branch, or `HEAD`.
+    pub head: String,
+}
+
+/// What the History tab's diff shows.
+enum Target {
+    Commit(String),
+    Range {
+        newest: String,
+        oldest: String,
+        /// Set when the run is a whole comparison: measured from the merge
+        /// base, so merges from the base don't show up as changes.
+        compare: Option<Compare>,
+    },
+}
+
+impl Target {
+    fn key(&self) -> (String, String) {
+        match self {
+            Target::Commit(oid) => (oid.clone(), oid.clone()),
+            Target::Range { newest, oldest, .. } => (newest.clone(), oldest.clone()),
+        }
+    }
+}
+
 /// Body lines shown before "Show more".
 const COLLAPSED_BODY_LINES: usize = 3;
 
@@ -45,19 +77,30 @@ impl Workspace {
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         let path = self.history_path.clone();
+        let compare = self.history_compare.clone();
         self.history_head = self.status.branch.oid.clone();
         self._history_task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    match path {
-                        Some(path) => repo.file_log(&path, HISTORY_LIMIT),
-                        None => repo.log(HISTORY_LIMIT),
-                    }
+                    let commits = match (&compare, &path) {
+                        (Some(compare), _) => {
+                            repo.log_range(&compare.base, &compare.head, HISTORY_LIMIT)
+                        }
+                        (None, Some(path)) => repo.file_log(path, HISTORY_LIMIT),
+                        (None, None) => repo.log(HISTORY_LIMIT),
+                    }?;
+                    // A stack is worth showing only on the branch's own history.
+                    let stack = match path {
+                        Some(_) => None,
+                        None => repo.stack().unwrap_or(None),
+                    };
+                    anyhow::Ok((commits, stack))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(commits) => {
+                    Ok((commits, stack)) => {
+                        this.stack = stack;
                         let previous = this
                             .pending_commit
                             .take()
@@ -65,10 +108,17 @@ impl Workspace {
                         let ix = previous
                             .and_then(|oid| commits.iter().position(|c| c.oid == oid))
                             .or((!commits.is_empty()).then_some(0));
+                        let len = commits.len();
                         this.commits = Arc::new(commits);
                         this.history_loaded = true;
                         this.commit_selected = None;
-                        this.select_commit(ix, cx);
+                        this.commit_anchor = None;
+                        if this.history_compare.is_some() && len > 1 {
+                            // A comparison opens on the whole change.
+                            this.extend_commit_to(Some(0), Some(len - 1), cx);
+                        } else {
+                            this.select_commit(ix, cx);
+                        }
                     }
                     Err(error) => this.error = Some(error.to_string().into()),
                 }
@@ -85,8 +135,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.history_path != path {
+        if self.history_path != path || self.history_compare.is_some() {
             self.history_path = path;
+            self.history_compare = None;
             self.history_loaded = false;
             self.commits = Arc::default();
             self.commit_selected = None;
@@ -98,6 +149,7 @@ impl Workspace {
     pub(super) fn show_commit(&mut self, oid: String, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_commit = Some(oid);
         self.history_path = None;
+        self.history_compare = None;
         self.history_loaded = false;
         self.commit_selected = None;
         self.show_panel(super::Panel::History, window, cx);
@@ -119,52 +171,105 @@ impl Workspace {
         self.commits.get(self.commit_selected?)
     }
 
+    /// The selected run of commits as (newest, oldest) indices, when more
+    /// than one is selected.
+    pub(super) fn selected_range(&self) -> Option<(usize, usize)> {
+        let (cursor, anchor) = (self.commit_selected?, self.commit_anchor?);
+        (cursor != anchor).then(|| (cursor.min(anchor), cursor.max(anchor)))
+    }
+
+    /// Selects one commit.
     pub(super) fn select_commit(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
-        if ix == self.commit_selected {
+        if ix == self.commit_selected && self.commit_anchor.is_none() {
             return;
         }
+        self.commit_anchor = None;
         self.commit_selected = ix;
-        let Some(commit) = ix.and_then(|ix| self.commits.get(ix)) else {
+        self.load_commit_selection(cx);
+    }
+
+    /// Selects from `anchor` (or the current selection) to `ix`.
+    pub(super) fn extend_commit_to(
+        &mut self,
+        ix: Option<usize>,
+        anchor: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = anchor.or(self.commit_anchor).or(self.commit_selected);
+        if ix == self.commit_selected && anchor == self.commit_anchor {
+            return;
+        }
+        self.commit_anchor = anchor;
+        self.commit_selected = ix;
+        self.load_commit_selection(cx);
+    }
+
+    fn load_commit_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.commit_selected else {
             self.commit_detail = None;
+            self.history_patch.clear();
             self.history_diff
                 .update(cx, |state, cx| state.set_files([], cx));
+            cx.notify();
             return;
         };
-        if let Some(ix) = ix {
-            self.history_scroll
-                .scroll_to_item(ix, ScrollStrategy::Nearest);
-        }
-        let oid = commit.oid.clone();
+        self.history_scroll
+            .scroll_to_item(ix, ScrollStrategy::Nearest);
         let repo = self.repo.clone();
         let path = self.history_path.clone();
+        let target = match self.selected_range() {
+            Some((newest, oldest)) => {
+                let whole = newest == 0 && oldest + 1 == self.commits.len();
+                let compare = self.history_compare.clone().filter(|_| whole);
+                Target::Range {
+                    newest: self.commits[newest].oid.clone(),
+                    oldest: self.commits[oldest].oid.clone(),
+                    compare,
+                }
+            }
+            None => Target::Commit(self.commits[ix].oid.clone()),
+        };
+        let key = target.key();
         self._commit_task = cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn({
-                    let oid = oid.clone();
-                    async move {
-                        let message = repo.commit_message(&oid)?;
-                        let patch = match &path {
-                            Some(path) => repo.commit_file_patch(&oid, path)?,
-                            None => repo.commit_patch(&oid)?,
-                        };
-                        let files = DiffFile::parse(&patch)
-                            .map_err(|error| anyhow::anyhow!("couldn't read diff: {error}"))?;
-                        anyhow::Ok((message, files))
-                    }
+                .background_spawn(async move {
+                    let path = path.as_deref();
+                    let (message, patch) = match target {
+                        Target::Commit(oid) => {
+                            let patch = match path {
+                                Some(path) => repo.commit_file_patch(&oid, path)?,
+                                None => repo.commit_patch(&oid)?,
+                            };
+                            (Some(repo.commit_message(&oid)?), patch)
+                        }
+                        Target::Range {
+                            compare: Some(compare),
+                            ..
+                        } => (
+                            None,
+                            repo.compare_patch(&compare.base, &compare.head, path)?,
+                        ),
+                        Target::Range { newest, oldest, .. } => {
+                            (None, repo.commits_patch(&oldest, &newest, path)?)
+                        }
+                    };
+                    let files = DiffFile::parse(&patch)
+                        .map_err(|error| anyhow::anyhow!("couldn't read diff: {error}"))?;
+                    anyhow::Ok((message, patch, files))
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.selected_commit().map(|c| &c.oid) != Some(&oid) {
+                if this.selection_key() != key {
                     return;
                 }
                 match result {
-                    Ok((message, files)) => {
-                        let selection = TextSelectionHandle::new(message.clone(), cx);
-                        this.commit_detail = Some(CommitDetail {
-                            oid,
+                    Ok((message, patch, files)) => {
+                        this.commit_detail = message.map(|message| CommitDetail {
+                            oid: key.0.clone(),
+                            selection: TextSelectionHandle::new(message.clone(), cx),
                             message,
-                            selection,
                         });
+                        this.history_patch = patch;
                         this.history_diff
                             .update(cx, |state, cx| state.set_files(files, cx));
                         this.schedule_relayout(cx);
@@ -178,7 +283,23 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn step_commit(&mut self, direction: isize, cx: &mut Context<Self>) {
+    /// The newest and oldest selected commits, to tell whether a load is stale.
+    fn selection_key(&self) -> (String, String) {
+        let oid = |ix: usize| {
+            self.commits
+                .get(ix)
+                .map(|c| c.oid.clone())
+                .unwrap_or_default()
+        };
+        match (self.selected_range(), self.commit_selected) {
+            (Some((newest, oldest)), _) => (oid(newest), oid(oldest)),
+            (None, Some(ix)) => (oid(ix), oid(ix)),
+            (None, None) => Default::default(),
+        }
+    }
+
+    /// Moves the selection, or with `extend` grows or shrinks the run.
+    pub(super) fn step_commit(&mut self, direction: isize, extend: bool, cx: &mut Context<Self>) {
         if self.commits.is_empty() {
             return;
         }
@@ -188,12 +309,42 @@ impl Workspace {
                 .min(self.commits.len() - 1),
             None => 0,
         };
-        self.select_commit(Some(ix), cx);
+        if extend {
+            self.extend_commit_to(Some(ix), None, cx);
+        } else {
+            self.select_commit(Some(ix), cx);
+        }
+    }
+
+    /// Shows only `head`'s commits since `base`, and their whole change.
+    pub(super) fn compare(
+        &mut self,
+        base: String,
+        head: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_compare = Some(Compare { base, head });
+        self.history_path = None;
+        self.history_loaded = false;
+        self.commits = Arc::default();
+        self.commit_selected = None;
+        self.commit_anchor = None;
+        self.show_panel(super::Panel::History, window, cx);
+    }
+
+    pub(super) fn stop_comparing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.history_compare.is_some() {
+            self.set_history_path(None, window, cx);
+        }
     }
 
     pub(super) fn render_history(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let commits = self.commits.clone();
-        let selected = self.commit_selected;
+        let selected = match self.selected_range() {
+            Some((newest, oldest)) => Some(newest..=oldest),
+            None => self.commit_selected.map(|ix| ix..=ix),
+        };
         let focused = self.history_focus.is_focused(window);
         let owner = cx.entity().downgrade();
         let filter = self.history_path.clone().map(|path| {
@@ -247,7 +398,7 @@ impl Workspace {
                 uniform_list("commit-rows", commits.len(), move |range, _, cx| {
                     range
                         .map(|ix| {
-                            render_commit_row(ix, &commits[ix], selected, focused, &owner, cx)
+                            render_commit_row(ix, &commits[ix], &selected, focused, &owner, cx)
                         })
                         .collect()
                 })
@@ -255,15 +406,116 @@ impl Workspace {
                 .track_scroll(&self.history_scroll),
             )
             .child(Scrollbar::vertical(&self.history_scroll));
+        let compare = self.history_compare.as_ref().map(|compare| {
+            h_flex()
+                .flex_none()
+                .px_3()
+                .py_1()
+                .gap_2()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(div().flex_1().min_w_0().truncate().child(format!(
+                    "{} since {} · {}",
+                    self.ref_label(&compare.head),
+                    compare.base,
+                    count(self.commits.len(), "commit")
+                )))
+                .child(
+                    Button::new("stop-comparing")
+                        .ghost()
+                        .xsmall()
+                        .label("All commits")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.stop_comparing(window, cx)),
+                        ),
+                )
+        });
         v_flex()
             .flex_1()
             .min_h_0()
+            .children(self.render_stack(cx))
             .children(filter)
+            .children(compare)
             .child(list)
+            .children(self.render_notes_strip(cx))
             .into_any_element()
     }
 
-    pub(super) fn render_commit_detail(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// `HEAD` as the branch name it stands for.
+    pub(super) fn ref_label(&self, name: &str) -> String {
+        if name == "HEAD" {
+            self.head_label()
+        } else {
+            name.to_owned()
+        }
+    }
+
+    /// The branches stacked under and over this one; each opens that
+    /// layer's own change.
+    fn render_stack(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let stack = self
+            .stack
+            .as_ref()
+            .filter(|_| self.history_path.is_none())?;
+        let comparing = self.history_compare.as_ref();
+        let muted = cx.theme().muted_foreground;
+        let separator = || div().flex_none().text_color(muted).child("›");
+        let trunk = stack.trunk.clone();
+        let mut row = h_flex()
+            .id("stack")
+            .flex_none()
+            .px_2()
+            .py_1()
+            .gap_0p5()
+            .overflow_x_scroll()
+            .text_xs()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                Button::new("stack-trunk")
+                    .ghost()
+                    .xsmall()
+                    .label(trunk)
+                    .text_color(muted)
+                    .tooltip("Show all commits")
+                    .on_click(cx.listener(|this, _, window, cx| this.stop_comparing(window, cx))),
+            );
+        for (ix, layer) in stack.layers.iter().enumerate() {
+            let head = if layer.is_head { "HEAD" } else { &layer.branch };
+            let active = comparing.is_some_and(|c| c.head == head && c.base == layer.base);
+            let (base, head) = (layer.base.clone(), head.to_owned());
+            row = row.child(separator()).child(
+                Button::new(("stack-layer", ix))
+                    .ghost()
+                    .xsmall()
+                    .selected(active)
+                    .label(format!("{} {}", layer.branch, layer.commits))
+                    .when(layer.is_head, |this| this.font_semibold())
+                    .when(!layer.is_head, |this| this.text_color(muted))
+                    .tooltip(format!(
+                        "Review {}: {} on {}",
+                        layer.branch,
+                        count(layer.commits, "commit"),
+                        layer.base
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.compare(base.clone(), head.clone(), window, cx)
+                    })),
+            );
+        }
+        Some(row.into_any_element())
+    }
+
+    pub(super) fn render_commit_detail(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(range) = self.selected_range() {
+            return self.render_range_detail(range, window, cx);
+        }
         let Some(commit) = self.selected_commit() else {
             return v_flex()
                 .size_full()
@@ -379,8 +631,22 @@ impl Workspace {
                             }),
                     ),
             )
+            .child(self.render_history_diff(window, cx))
+            .into_any_element()
+    }
+
+    fn render_history_diff(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let selection_bar = self
+            .history_diff
+            .read(cx)
+            .selected_lines()
+            .map(|_| self.render_note_hint(window, cx));
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
             .child(
-                div().flex_1().min_h_0().child(
+                self.annotate(
                     Diff::new(&self.history_diff)
                         .line_number(true)
                         .render_header({
@@ -389,8 +655,68 @@ impl Workspace {
                                 super::style::diff_file_header(file, &state, None, cx)
                             }
                         }),
+                    super::annotations::DiffPane::History,
+                    cx,
                 ),
             )
+            .children(selection_bar)
+            .children(self.render_note_draft(super::annotations::DiffPane::History, window, cx))
+            .into_any_element()
+    }
+
+    /// A run of commits: what they are, then their combined diff.
+    fn render_range_detail(
+        &self,
+        (newest, oldest): (usize, usize),
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let commits = &self.commits[newest..=oldest];
+        let whole = newest == 0 && oldest + 1 == self.commits.len();
+        let title = match self.history_compare.as_ref().filter(|_| whole) {
+            Some(compare) => format!("{} since {}", self.ref_label(&compare.head), compare.base),
+            None => count(commits.len(), "commit"),
+        };
+        const LISTED: usize = 8;
+        let muted = cx.theme().muted_foreground;
+        v_flex()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .child(
+                v_flex()
+                    .flex_none()
+                    .px_4()
+                    .py_3()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().text_lg().font_semibold().child(title))
+                    .children(commits.iter().take(LISTED).map(|commit| {
+                        h_flex()
+                            .gap_2()
+                            .text_sm()
+                            .min_w_0()
+                            .child(super::style::hash(&commit.short_oid, cx))
+                            .child(div().min_w_0().truncate().child(commit.subject.clone()))
+                    }))
+                    .when(commits.len() > LISTED, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("and {} more", commits.len() - LISTED)),
+                        )
+                    })
+                    .child(
+                        div()
+                            .pt_1()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("Shift-click or shift-↑↓ to change the range"),
+                    ),
+            )
+            .child(self.render_history_diff(window, cx))
             .into_any_element()
     }
 }
@@ -398,12 +724,12 @@ impl Workspace {
 fn render_commit_row(
     ix: usize,
     commit: &Commit,
-    selected: Option<usize>,
+    selected: &Option<std::ops::RangeInclusive<usize>>,
     focused: bool,
     owner: &WeakEntity<Workspace>,
     cx: &App,
 ) -> AnyElement {
-    let is_selected = selected == Some(ix);
+    let is_selected = selected.as_ref().is_some_and(|range| range.contains(&ix));
     let owner = owner.clone();
     let refs: Vec<SharedString> = commit
         .refs
@@ -453,12 +779,24 @@ fn render_commit_row(
                         .child(div().flex_none().child(relative_time(commit.time))),
                 ),
         )
-        .on_click(move |_, _, cx| {
+        .on_click(move |event, _, cx| {
+            let extend = event.modifiers().shift;
             owner
-                .update(cx, |this, cx| this.select_commit(Some(ix), cx))
+                .update(cx, |this, cx| {
+                    if extend {
+                        this.extend_commit_to(Some(ix), None, cx)
+                    } else {
+                        this.select_commit(Some(ix), cx)
+                    }
+                })
                 .ok();
         })
         .into_any_element()
+}
+
+/// "1 commit", "3 commits".
+pub(super) fn count(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
 /// "3 days ago"-style ages for commit lists.

@@ -194,6 +194,16 @@ Each bullet is roughly one commit. A phase ends with something usable.
   recent repositories and the ones under the usual code folders.
 - [x] Git bar above the commit box: branch, fetch, pull, push and a menu with
   every other git action. Sidebar tabs restyled (underline, icon and label).
+- [x] Commit ranges: shift-select commits in History for their combined diff.
+- [x] Branch comparison (`c` in History): the branch's commits since another,
+  and its whole change from the merge base.
+- [x] Stacks: the branches HEAD is stacked between, above the History list;
+  each layer opens its own change. New pull requests target the layer below.
+- [x] Review notes on diff lines (`n`, or the + button), kept per repository;
+  "Copy as prompt" (`cmd-alt-c`) hands them, with open PR threads, to an agent.
+- [x] Pull requests through `gh`: number and open threads in the git bar,
+  review threads inline when comparing with the PR's base, and a dialog that
+  pushes and opens one. Read-only otherwise: yin posts no comments.
 
 ## Known issues (upstream, gpui-component 0.8.1)
 - The first character typed right after `cmd-f` is lost. The find bar re-selects
@@ -239,5 +249,10 @@ Each bullet is roughly one commit. A phase ends with something usable.
   disappear or move. The Diff component compiles each language's highlight
   query on every update; that's upstream, so yin updates it less often. An
   agent writing steadily went from about 32% CPU to 13%.
+- 2026-10-31 — GitHub through the `gh` CLI rather than the API directly: it
+  owns sign-in and tokens. Lookups run when the branch changes or after two
+  minutes, never per file save, and hide quietly without gh.
+- 2026-10-31 — Notes are written in a box floating over the diff, not inline:
+  the diff binds single letters (space, s, n) that would eat typing.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.

@@ -21,6 +21,10 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
 - Stage or unstage whole files, hunks or individual lines, right in that diff.
 - Mark files reviewed and hide them; a file comes back the moment an agent
   touches it again.
+- Leave review notes on lines, then copy them all as one prompt for the
+  agent. Notes stay on your Mac.
+- See what a run of commits changed together, or a whole branch against its
+  base. Stacked branches show as a stack; each layer opens its own change.
 
 **Git**
 - Commit and amend; hook output shows when a hook fails.
@@ -28,6 +32,9 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
   a force push with lease.
 - Switch or create branches, stash, and resolve merge conflicts in the diff.
 - History, per-file history, blame, and a picker for worktrees.
+- With the GitHub CLI (`gh`): the branch's pull request in the git bar, its
+  review threads inline in its diff, and opening a pull request (stacked
+  branches target the branch below). yin never posts comments.
 
 **Read and navigate**
 - File tree coloured by git status, fuzzy file finder, project search.

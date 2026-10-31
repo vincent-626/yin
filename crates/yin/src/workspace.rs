@@ -28,6 +28,7 @@ use yin_git::{Change, Repository, Status};
 use crate::changes::{self, FileKey, Row, Section};
 use crate::watcher::{self, RepoWatcher};
 
+mod annotations;
 mod blame;
 mod branches;
 mod conflicts;
@@ -37,6 +38,7 @@ mod git_bar;
 mod history;
 mod lsp;
 mod palette;
+mod pull_request;
 mod remote;
 mod review_all;
 mod reviewing;
@@ -94,6 +96,15 @@ pub(crate) mod actions {
             FileHistory,
             ToggleBlame,
             CopyCommitHash,
+            SelectNextExtend,
+            SelectPreviousExtend,
+            CompareBranch,
+            AddNote,
+            CopyReviewPrompt,
+            ClearNotes,
+            CreatePullRequest,
+            ReviewPullRequest,
+            OpenPullRequest,
         ]
     );
 }
@@ -213,11 +224,18 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("j", SelectNext, Some(HISTORY_CONTEXT)),
         KeyBinding::new("up", SelectPrevious, Some(HISTORY_CONTEXT)),
         KeyBinding::new("k", SelectPrevious, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("shift-down", SelectNextExtend, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("shift-j", SelectNextExtend, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("shift-up", SelectPreviousExtend, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("shift-k", SelectPreviousExtend, Some(HISTORY_CONTEXT)),
+        KeyBinding::new("c", CompareBranch, Some(HISTORY_CONTEXT)),
         KeyBinding::new("enter", FocusDiff, Some(HISTORY_CONTEXT)),
         KeyBinding::new("cmd-c", CopyCommitHash, Some(HISTORY_CONTEXT)),
         KeyBinding::new("b", SwitchBranch, Some(HISTORY_CONTEXT)),
         KeyBinding::new("space", StageLines, Some("Diff")),
         KeyBinding::new("s", StageHunk, Some("Diff")),
+        KeyBinding::new("n", AddNote, Some("Diff")),
+        KeyBinding::new("cmd-alt-c", CopyReviewPrompt, Some("Workspace")),
     ]);
 }
 
@@ -263,6 +281,22 @@ pub struct Workspace {
     panel: Panel,
     commits: Arc<Vec<yin_git::Commit>>,
     commit_selected: Option<usize>,
+    /// The other end of a run of selected commits.
+    commit_anchor: Option<usize>,
+    /// The History tab compares two branches.
+    history_compare: Option<history::Compare>,
+    /// The branches HEAD's branch is stacked with.
+    stack: Option<yin_git::Stack>,
+    /// The patch the History diff shows.
+    history_patch: String,
+    /// The branch picker picks a branch to compare with.
+    picking_compare: bool,
+    notes: crate::notes::Notes,
+    note_draft: Option<annotations::NoteDraft>,
+    pull_request: Option<yin_git::PullRequest>,
+    review_threads: Vec<yin_git::ReviewThread>,
+    pr_check: Option<pull_request::PrCheck>,
+    _pr_task: Task<()>,
     commit_detail: Option<history::CommitDetail>,
     history_diff: Entity<DiffState>,
     history_focus: FocusHandle,
@@ -316,6 +350,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(repo: Repository, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let reviews = crate::review::Reviews::load(repo.workdir());
+        let notes = crate::notes::Notes::load(repo.workdir());
         window.set_window_title(&repo.name());
         let diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&diff, |_, _, cx| cx.notify()).detach();
@@ -395,6 +430,17 @@ impl Workspace {
             panel: Panel::Changes,
             commits: Arc::default(),
             commit_selected: None,
+            commit_anchor: None,
+            history_compare: None,
+            stack: None,
+            history_patch: String::new(),
+            picking_compare: false,
+            notes,
+            note_draft: None,
+            pull_request: None,
+            review_threads: Vec::new(),
+            pr_check: None,
+            _pr_task: Task::ready(()),
             commit_detail: None,
             history_diff,
             history_focus: cx.focus_handle().tab_stop(true),
@@ -525,6 +571,28 @@ impl Workspace {
         }
     }
 
+    /// The files the History diff shows, and its title-bar summary.
+    #[cfg(test)]
+    pub fn history_files(&self, cx: &App) -> Vec<String> {
+        let files = self.history_diff.read(cx).files();
+        files.iter().map(|file| file.path().to_string()).collect()
+    }
+
+    #[cfg(test)]
+    pub fn compare_for_test(&mut self, base: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.compare(base.into(), "HEAD".into(), window, cx);
+    }
+
+    #[cfg(test)]
+    pub fn notes(&self) -> &[crate::notes::Note] {
+        self.notes.items()
+    }
+
+    #[cfg(test)]
+    pub fn history_commit_count(&self) -> usize {
+        self.commits.len()
+    }
+
     #[cfg(test)]
     pub fn commit_message_text(&self, cx: &App) -> String {
         self.commit_message.read(cx).value().to_string()
@@ -562,7 +630,7 @@ impl Workspace {
             .or(self.active_file);
         if session.split_diff {
             self.diff_mode = DiffMode::Split;
-            for diff in [&self.diff, &self.all_diff] {
+            for diff in [&self.diff, &self.all_diff, &self.history_diff] {
                 diff.update(cx, |diff, cx| diff.set_mode(DiffMode::Split, cx));
             }
         }
@@ -639,6 +707,7 @@ impl Workspace {
             self.load_files(cx);
         }
         self.tree_shape = Some(shape);
+        self.check_pull_request(false, cx);
         // Reload even when the selection is unchanged: the file may have changed.
         self.load_diff(cx);
     }
@@ -1174,6 +1243,7 @@ impl Workspace {
                     )
                     .child(Scrollbar::vertical(&self.changes_scroll)),
             )
+            .children(self.render_notes_strip(cx))
             .child(self.render_commit_box(window, cx))
     }
 
@@ -1466,16 +1536,16 @@ impl Render for Workspace {
                     _ => DiffMode::Unified,
                 };
                 let mode = this.diff_mode;
-                this.diff.update(cx, |state, cx| state.set_mode(mode, cx));
-                this.all_diff
-                    .update(cx, |state, cx| state.set_mode(mode, cx));
+                for diff in [&this.diff, &this.all_diff, &this.history_diff] {
+                    diff.update(cx, |state, cx| state.set_mode(mode, cx));
+                }
             }))
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| match this.panel {
                 Panel::Changes => {
                     let ix = changes::step(&this.rows, this.selected, 1);
                     this.select(ix, cx);
                 }
-                Panel::History => this.step_commit(1, cx),
+                Panel::History => this.step_commit(1, false, cx),
                 Panel::Files => this.step_open_file(1, cx),
                 Panel::Search => this.step_search(1, cx),
             }))
@@ -1485,7 +1555,7 @@ impl Render for Workspace {
                         let ix = changes::step(&this.rows, this.selected, -1);
                         this.select(ix, cx);
                     }
-                    Panel::History => this.step_commit(-1, cx),
+                    Panel::History => this.step_commit(-1, false, cx),
                     Panel::Files => this.step_open_file(-1, cx),
                     Panel::Search => this.step_search(-1, cx),
                 }),
@@ -1511,6 +1581,36 @@ impl Render for Workspace {
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleBlame, window, cx| this.toggle_blame(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SelectNextExtend, _, cx| this.step_commit(1, true, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SelectPreviousExtend, _, cx| this.step_commit(-1, true, cx)),
+            )
+            .on_action(cx.listener(|this, _: &CompareBranch, window, cx| {
+                this.picking_compare = true;
+                this.open_branch_picker(window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &AddNote, window, cx| {
+                    this.add_note_for_selection(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &CopyReviewPrompt, window, cx| {
+                this.copy_review_prompt(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ClearNotes, window, cx| this.clear_notes(window, cx)))
+            .on_action(cx.listener(|this, _: &CreatePullRequest, window, cx| {
+                this.open_create_pull_request(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ReviewPullRequest, window, cx| {
+                this.review_pull_request(window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &OpenPullRequest, _, cx| {
+                    this.open_pull_request_in_browser(cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &CopyCommitHash, window, cx| {
                 this.copy_selected_commit_hash(window, cx)
@@ -1573,11 +1673,10 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &Discard, window, cx| this.discard_selected(window, cx)),
             )
-            .on_action(
-                cx.listener(|this, _: &SwitchBranch, window, cx| {
-                    this.open_branch_picker(window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, _: &SwitchBranch, window, cx| {
+                this.picking_compare = false;
+                this.open_branch_picker(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &StageLines, window, cx| {
                 this.stage_selection(false, window, cx)
             }))
@@ -1630,7 +1729,7 @@ impl Render for Workspace {
                                 self.render_diff(cx).into_any_element()
                             }
                             Panel::Changes => self.render_all_diff(window, cx),
-                            Panel::History => self.render_commit_detail(cx),
+                            Panel::History => self.render_commit_detail(window, cx),
                             Panel::Files | Panel::Search => self.render_open_files(cx),
                         })),
                 ),

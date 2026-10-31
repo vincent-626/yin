@@ -378,3 +378,125 @@ fn switcher_and_welcome_open_repositories(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|cx| cx.windows().len()), 2);
     assert_eq!(cx.update(crate::windows::open_repos).len(), 2);
 }
+
+#[gpui_kit::test]
+fn diffs_a_run_of_commits_and_a_branch(cx: &mut TestAppContext) {
+    let dir = fixture();
+    let path = dir.path();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "second"]);
+    git(path, &["switch", "--quiet", "-c", "feature"]);
+    std::fs::write(path.join("c.txt"), "sea\n").unwrap();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "third"]);
+    let repo = Repository::open(path).unwrap();
+    let (window, workspace) = open(cx, repo);
+    cx.run_until_parked();
+
+    // The newest commit alone, then it and the one before.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("cmd-3", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(workspace.read(cx).history_files(cx), ["c.txt"]));
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("shift-down", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            workspace.read(cx).history_files(cx),
+            ["a.txt", "b.txt", "c.txt"]
+        )
+    });
+    // Plain down moves on to the next commit alone: the first.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(workspace.read(cx).history_files(cx), ["a.txt"]));
+
+    // Comparing with main: only feature's commit, and its change.
+    cx.update_window(window.into(), |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.compare_for_test("main", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = workspace.read(cx);
+        assert_eq!(workspace.history_commit_count(), 1);
+        assert_eq!(workspace.history_files(cx), ["c.txt"]);
+    });
+}
+
+#[gpui_kit::test]
+fn writes_a_review_note_and_copies_it_as_a_prompt(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(path, &["config", "user.name", "Yin Test"]);
+    git(path, &["config", "user.email", "yin@example.com"]);
+    std::fs::write(path.join("f.txt"), numbered(1..=10)).unwrap();
+    git(path, &["add", "-A"]);
+    git(path, &["commit", "--quiet", "-m", "initial"]);
+    std::fs::write(
+        path.join("f.txt"),
+        numbered(1..=10).replace("line 5\n", "line five\n"),
+    )
+    .unwrap();
+
+    let (window, workspace) = open(cx, Repository::open(path).unwrap());
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let diff = workspace.read(cx).diff_state();
+        diff.update(cx, |diff, cx| {
+            diff.set_selected_lines(
+                Some(DiffLineRange::new("f.txt", DiffSide::Modified, 5, 5)),
+                cx,
+            )
+        });
+    });
+    // n opens the note box with focus; typing there doesn't trigger diff keys.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(actions::AddNote.boxed_clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.input("Spell numbers as digits", cx);
+        window.press("cmd-enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let notes = workspace.read(cx).notes();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].body, "Spell numbers as digits");
+        assert_eq!(notes[0].code, ["line five"]);
+        assert_eq!(notes[0].location(), "f.txt:5");
+    });
+    // Typing "s" and space in the note didn't stage anything.
+    assert_eq!(git(path, &["diff", "--cached"]), "");
+
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(actions::CopyReviewPrompt.boxed_clone(), cx);
+    })
+    .unwrap();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert!(copied.contains("1. f.txt:5\n"), "{copied}");
+    assert!(copied.contains("line five") && copied.contains("Spell numbers as digits"));
+}

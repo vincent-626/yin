@@ -1,4 +1,5 @@
-//! The branch picker: switch to a local or remote branch, or create one.
+//! The branch picker: switch to a local or remote branch, or create one; or
+//! pick a branch to compare with.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -23,13 +24,21 @@ enum Choice {
 
 /// The picker's groups for `query`, skipping empty ones. Rendering and
 /// confirmation both derive from this, so index paths agree.
-fn sections(branches: &[BranchRef], query: &str) -> Vec<(&'static str, Vec<Choice>)> {
+fn sections(
+    branches: &[BranchRef],
+    query: &str,
+    comparing: bool,
+) -> Vec<(&'static str, Vec<Choice>)> {
     let query = query.trim();
     let mut sections = Vec::new();
-    if !query.is_empty() && !branches.iter().any(|b| b.local_name() == query) {
+    if !comparing && !query.is_empty() && !branches.iter().any(|b| b.local_name() == query) {
         sections.push(("New", vec![Choice::Create(query.to_owned())]));
     }
-    let (remote, local): (Vec<_>, Vec<_>) = branches.iter().cloned().partition(|b| b.is_remote);
+    let (remote, local): (Vec<_>, Vec<_>) = branches
+        .iter()
+        .filter(|b| !(comparing && b.is_head))
+        .cloned()
+        .partition(|b| b.is_remote);
     for (label, group) in [("Local", local), ("Remote", remote)] {
         if !group.is_empty() {
             sections.push((label, group.into_iter().map(Choice::Switch).collect()));
@@ -71,8 +80,11 @@ impl Workspace {
                 });
             }
             let query = picker.read(cx).query(cx).to_string();
-            let sections = this
-                .read_with(cx, |this, _| sections(&this.branches, &query))
+            let (sections, comparing) = this
+                .read_with(cx, |this, _| {
+                    let comparing = this.picking_compare;
+                    (sections(&this.branches, &query, comparing), comparing)
+                })
                 .unwrap_or_default();
             let groups = sections.into_iter().map(|(label, choices)| {
                 CommandGroup::new()
@@ -102,7 +114,11 @@ impl Workspace {
                     let mut command = Command::new(&picker)
                         .bordered(false)
                         .rounded(cx.theme().radius_lg)
-                        .placeholder("Switch to or create a branch…")
+                        .placeholder(if comparing {
+                            "Compare with branch…"
+                        } else {
+                            "Switch to or create a branch…"
+                        })
                         .min_h(px(120.))
                         .max_h(px(360.));
                     for group in groups.clone() {
@@ -129,10 +145,16 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let choice = sections(&self.branches, query)
+        let choice = sections(&self.branches, query, self.picking_compare)
             .into_iter()
             .nth(index.section)
             .and_then(|(_, choices)| choices.into_iter().nth(index.row));
+        if self.picking_compare {
+            if let Some(Choice::Switch(branch)) = choice {
+                self.compare(branch.name, "HEAD".into(), window, cx);
+            }
+            return;
+        }
         match choice {
             Some(Choice::Create(name)) => {
                 self.run(move |repo| repo.create_branch(&name), window, cx)
@@ -167,7 +189,7 @@ mod tests {
             branch("origin/topic", true, false),
         ];
         let labels = |query| -> Vec<&str> {
-            sections(&branches, query)
+            sections(&branches, query, false)
                 .iter()
                 .map(|(label, _)| *label)
                 .collect()

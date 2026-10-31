@@ -18,6 +18,7 @@ current key.
 | `cmd-alt-s` / `cmd-alt-u` | Stage all / unstage all |
 | `cmd-alt-w` | Switch worktree |
 | `cmd-shift-d` | Unified / split diff |
+| `cmd-alt-c` | Copy review notes and open PR threads as a prompt |
 | `cmd-b` | Show or hide the sidebar |
 | `cmd-r` | Refresh |
 | `escape` | Back to the sidebar |
@@ -46,12 +47,15 @@ current key.
 | `shift-up` / `shift-down`, or drag line numbers | Select lines |
 | `space` | Stage the selected lines, or unstage them when they're all staged |
 | `s` | The same for their whole hunk |
+| `n`, or the + beside a line | Write a review note on the selected lines (`cmd-enter` adds it) |
 
 ## History, files and search
 
 | Where | Key | Does |
 |---|---|---|
 | History | `j` / `k`, `enter` | Move, read the commit |
+| History | `shift-j` / `shift-k`, shift-click | Select a run of commits and see their combined diff |
+| History | `c` | Compare this branch with another: its commits and whole change |
 | History | `cmd-c` | Copy the commit's hash (click the hash to copy it too) |
 | File tree | arrows, `enter` | Move, open and close folders, open a file |
 | Search results | `j` / `k`, `enter` | Move, open at the line |
