@@ -90,9 +90,12 @@ yin is a personal tool, shared as it is. It covers what its author needs every
 day and deliberately leaves out the rest: there is no terminal, debugger,
 extension system, light theme, or support for Intel Macs, Linux or Windows.
 
-Known issues come from the UI component library yin builds on and are listed in
-[docs/PLAN.md](docs/PLAN.md#known-issues-upstream-gpui-component-081), which
-also records how yin was planned and built.
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
+Known issues, all in the UI component library yin builds on:
+
+- The first character typed right after `cmd-f` in the editor is sometimes lost.
+- Hover cards draw a code block's language label over its first line.
 
 ## Built with
 

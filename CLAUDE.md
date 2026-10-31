@@ -1,7 +1,13 @@
 # yin — agent guide
 
-Native, GPU-rendered code workspace (review, git, navigate, read) built on GPUI.
-Read `docs/PLAN.md` first: it defines scope, phases and what is out of scope.
+Native, GPU-rendered code workspace (review, git, navigate, read) built on GPUI,
+for working alongside coding agents.
+
+## Scope
+
+In: reviewing changes, git without a terminal, navigating and reading code,
+reading markdown, light editing. Out: running code (terminal, debugger, tasks),
+extensions, settings UI, collaboration, AI chat, being a general editor.
 
 ## Ground rules
 
@@ -11,7 +17,11 @@ Read `docs/PLAN.md` first: it defines scope, phases and what is out of scope.
   `cx.background_spawn` and update entities when it finishes.
 - `yin_git` must not depend on GPUI. Put logic there and test it.
 - Git writes go through the `git` CLI (`yin_git::Repository::git`).
-- Keep `docs/PLAN.md` current: mark phase status and add decision-log lines.
+- Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would
+  notice. A release renames that heading to the version and date; the release
+  workflow publishes that section as the GitHub release notes.
+- GitHub goes through the `gh` CLI, which owns sign-in. yin reads pull requests
+  and opens them when asked; it never posts comments.
 
 ## References (read, don't depend)
 
@@ -57,6 +67,12 @@ panics on wakeups from other threads.
 
 ## Known GPUI / gpui-kit traps
 
+- The first character typed right after `cmd-f` in the editor is lost: the find
+  bar re-selects its query (`input/overlay.rs`, `query_echo`). Upstream.
+- `windows::open` defers; outside an update (at launch) use `open_now`, or the
+  deferral waits for the next event.
+- The diff binds single letters (space, s, n), so text inputs can't live inside
+  it: the note editor floats over the diff instead.
 - The `Diff` component learns its width during paint and its notify then
   doesn't schedule a frame. `Workspace::schedule_relayout` redraws twice
   after resizes and new diffs; keep calling it if you add another Diff.
@@ -78,5 +94,4 @@ cargo clippy --workspace --all-targets
 
 ## Commits
 
-One coherent step per commit, matching a bullet in `docs/PLAN.md` where
-possible. `cargo build` and `cargo test -p yin_git` pass before committing.
+One coherent step per commit. `cargo build` and `cargo test -p yin_git` pass before committing.

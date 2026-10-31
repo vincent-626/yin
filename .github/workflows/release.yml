@@ -23,6 +23,9 @@ jobs:
             exit 1
           fi
 
+      - name: Read the release notes from CHANGELOG.md
+        run: script/release-notes "${GITHUB_REF_NAME}" > "${RUNNER_TEMP}/notes.md"
+
       - name: Install the pinned toolchain
         run: rustup toolchain install
 
@@ -53,7 +56,7 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "yin ${GITHUB_REF_NAME}" \
-            --generate-notes \
+            --notes-file "${RUNNER_TEMP}/notes.md" \
             target/release/bundle/yin-macos-arm64.zip \
             target/release/bundle/yin-macos-arm64.zip.sha256 \
             target/release/bundle/THIRD_PARTY_LICENSES.txt

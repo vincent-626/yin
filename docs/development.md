@@ -20,9 +20,10 @@ script/install                  # release build into ~/Applications + `yin`
 | `yin_fs` | Working tree scan, folder tree, fuzzy matching, project search |
 | `yin_lsp` | A minimal language server client |
 
-[PLAN.md](PLAN.md) has the scope, the phases it was built in, decisions and
-known issues. [CLAUDE.md](../CLAUDE.md) is the guide for coding agents working
-on yin.
+[CLAUDE.md](../CLAUDE.md) is the guide for coding agents working on yin.
+[CHANGELOG.md](../CHANGELOG.md) lists what each release changed;
+`script/release-notes <version>` prints a version's section, which the release
+workflow publishes as its notes.
 
 ## Seeing changes in the real app
 

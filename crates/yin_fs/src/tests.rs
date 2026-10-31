@@ -69,7 +69,7 @@ fn fuzzy_prefers_tight_filename_matches() {
     let paths: Vec<String> = [
         "crates/yin/src/workspace.rs",
         "crates/yin/src/workspace/history.rs",
-        "docs/PLAN.md",
+        "docs/keys.md",
         "crates/yin_git/src/status.rs",
     ]
     .map(String::from)
