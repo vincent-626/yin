@@ -335,6 +335,8 @@ pub struct Workspace {
     panes: Entity<gpui_kit::component::resizable::ResizableState>,
     /// Sidebar width in points, once dragged or restored.
     sidebar_width: Option<f32>,
+    /// Whether the panes were last laid out with the sidebar.
+    panes_had_sidebar: bool,
     _files_task: Task<()>,
     finder: Entity<CommandState>,
     finder_results: Vec<String>,
@@ -365,8 +367,11 @@ impl Workspace {
         cx.subscribe(
             &panes,
             |this, panes, _: &gpui_kit::component::resizable::ResizablePanelEvent, cx| {
+                let sizes = panes.read(cx).sizes();
+                // With the sidebar hidden the only size is the main pane's.
                 if this.sidebar_visible
-                    && let Some(width) = panes.read(cx).sizes().first()
+                    && sizes.len() == 2
+                    && let Some(width) = sizes.first()
                 {
                     this.sidebar_width = Some((*width).into());
                 }
@@ -472,6 +477,7 @@ impl Workspace {
             file_pane_focus: cx.focus_handle(),
             panes,
             sidebar_width: None,
+            panes_had_sidebar: true,
             _files_task: Task::ready(()),
             finder: cx.new(|cx| CommandState::new(window, cx)),
             finder_results: Vec::new(),
@@ -1521,6 +1527,13 @@ impl Render for Workspace {
                 .update(cx, |state, cx| state.set_value(message, window, cx));
         }
         let rem = window.rem_size();
+        // The panes keep the sizes of the panels they last had; when the
+        // sidebar comes or goes, start over so it opens at its own width
+        // rather than the main pane's.
+        if self.panes_had_sidebar != self.sidebar_visible {
+            self.panes_had_sidebar = self.sidebar_visible;
+            self.panes.update(cx, |panes, _| panes.clear());
+        }
         v_flex()
             .id("workspace")
             .key_context("Workspace")

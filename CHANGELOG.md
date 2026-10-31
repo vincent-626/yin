@@ -6,6 +6,9 @@ next version.
 ## Unreleased
 
 - A changelog, used for the release notes.
+- Fixed: the sidebar came back wider after `cmd-b` hid and showed it.
+- The stack above History shows each layer's commit count dimmed, apart from
+  the branch name.
 
 ## 0.4.0 — 2026-10-31
 

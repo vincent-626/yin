@@ -491,7 +491,13 @@ impl Workspace {
                     .ghost()
                     .xsmall()
                     .selected(active)
-                    .label(format!("{} {}", layer.branch, layer.commits))
+                    .label(layer.branch.clone())
+                    .child(
+                        div()
+                            .font_weight(gpui_kit::FontWeight::NORMAL)
+                            .text_color(muted.opacity(0.7))
+                            .child(layer.commits.to_string()),
+                    )
                     .when(layer.is_head, |this| this.font_semibold())
                     .when(!layer.is_head, |this| this.text_color(muted))
                     .tooltip(format!(
