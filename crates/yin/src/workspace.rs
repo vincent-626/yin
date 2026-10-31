@@ -14,7 +14,6 @@ use gpui_kit::component::{
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
     scroll::Scrollbar,
-    status_bar::StatusBar,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -1048,7 +1047,44 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.open_branch_picker(window, cx)),
                         ),
                 )
-                .child(div().flex_1()),
+                .child(div().flex_1())
+                .when_some(self.error.clone(), |this, error| {
+                    this.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(cx.theme().red)
+                            .child(error),
+                    )
+                })
+                .when(
+                    self.diagnostics.errors + self.diagnostics.warnings > 0,
+                    |this| {
+                        let (errors, warnings) =
+                            (self.diagnostics.errors, self.diagnostics.warnings);
+                        let muted = cx.theme().muted_foreground;
+                        this.child(
+                            h_flex()
+                                .flex_none()
+                                .gap_2()
+                                .text_xs()
+                                .child(
+                                    div()
+                                        .text_color(if errors > 0 { cx.theme().red } else { muted })
+                                        .child(format!(
+                                            "{errors} error{}",
+                                            if errors == 1 { "" } else { "s" }
+                                        )),
+                                )
+                                .child(div().text_color(muted).child(format!(
+                                    "{warnings} warning{}",
+                                    if warnings == 1 { "" } else { "s" }
+                                ))),
+                        )
+                    },
+                )
+                .child(div().w_1()),
         )
     }
 
@@ -1371,7 +1407,6 @@ impl Render for Workspace {
                 .update(cx, |state, cx| state.set_value(message, window, cx));
         }
         let rem = window.rem_size();
-        let muted = cx.theme().muted_foreground;
         v_flex()
             .id("workspace")
             .key_context("Workspace")
@@ -1560,52 +1595,6 @@ impl Render for Workspace {
                             Panel::Files | Panel::Search => self.render_open_files(cx),
                         })),
                 ),
-            )
-            .child(
-                StatusBar::new()
-                    .left(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(crate::state::tilde(self.repo.workdir())),
-                    )
-                    .when_some(self.error.clone(), |this, error| {
-                        this.right(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().red)
-                                .truncate()
-                                .child(error),
-                        )
-                    })
-                    .when(
-                        self.diagnostics.errors + self.diagnostics.warnings > 0,
-                        |this| {
-                            let (errors, warnings) =
-                                (self.diagnostics.errors, self.diagnostics.warnings);
-                            this.right(
-                                h_flex()
-                                    .gap_2()
-                                    .text_xs()
-                                    .child(
-                                        div()
-                                            .text_color(if errors > 0 {
-                                                cx.theme().red
-                                            } else {
-                                                muted
-                                            })
-                                            .child(format!(
-                                                "{errors} error{}",
-                                                if errors == 1 { "" } else { "s" }
-                                            )),
-                                    )
-                                    .child(div().text_color(muted).child(format!(
-                                        "{warnings} warning{}",
-                                        if warnings == 1 { "" } else { "s" }
-                                    ))),
-                            )
-                        },
-                    ),
             )
     }
 }

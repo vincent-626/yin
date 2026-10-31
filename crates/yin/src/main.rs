@@ -73,5 +73,14 @@ fn initial_bounds(cx: &App) -> WindowBounds {
             return WindowBounds::Windowed(bounds);
         }
     }
-    WindowBounds::centered(size(px(1400.), px(900.)), cx)
+    // Fit the usable screen: a window macOS has to shrink keeps its first
+    // layout and stops redrawing.
+    let Some(screen) = cx.primary_display().map(|display| display.visible_bounds()) else {
+        return WindowBounds::centered(size(px(1400.), px(900.)), cx);
+    };
+    let size = size(
+        px(1400.).min(screen.size.width * 0.92),
+        px(900.).min(screen.size.height * 0.92),
+    );
+    WindowBounds::Windowed(Bounds::centered_at(screen.center(), size))
 }

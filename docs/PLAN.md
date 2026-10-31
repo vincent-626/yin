@@ -178,7 +178,7 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] All-changes review view (`a`): every change against HEAD in one diff.
 - [x] Command palette (`cmd-shift-p`).
 - [x] Language server diagnostics: squiggles, red files and folders in the tree,
-  error and warning counts in the status bar.
+  error and warning counts in the title bar (the status bar is gone).
 - [x] Sidebar width and window frame remembered.
 - [x] Diverged pull offers a rebase; rejected push offers force-with-lease;
   rebase banner with Continue and Abort; merge commits start from git's message.
