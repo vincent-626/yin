@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+## 0.4.2 — 2026-10-31
+
 - Review notes follow their code as an agent edits: a note moves with its
   lines, and when they change or disappear it's marked outdated, shown at the
   top of its file with the code it was about, and flagged in the prompt. Notes
