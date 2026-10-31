@@ -52,6 +52,7 @@ fn commands() -> Vec<(&'static str, MakeAction)> {
         ("Save file", || Box::new(SaveFile)),
         ("Close tab", || Box::new(CloseFile)),
         ("Markdown preview / source", || Box::new(TogglePreview)),
+        ("Find in markdown preview", || Box::new(FindInPreview)),
         ("Unified / split diff", || Box::new(ToggleDiffMode)),
         ("Toggle sidebar", || Box::new(ToggleSidebar)),
         ("Refresh", || Box::new(Refresh)),

@@ -204,6 +204,8 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - [x] Pull requests through `gh`: number and open threads in the git bar,
   review threads inline when comparing with the PR's base, and a dialog that
   pushes and opens one. Read-only otherwise: yin posts no comments.
+- [x] Find in the markdown preview (`cmd-f`): matches highlighted, enter and
+  shift-enter step through them.
 
 ## Known issues (upstream, gpui-component 0.8.1)
 - The first character typed right after `cmd-f` is lost. The find bar re-selects

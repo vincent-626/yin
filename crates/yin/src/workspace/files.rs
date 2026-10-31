@@ -647,6 +647,18 @@ impl Workspace {
         }
     }
 
+    /// The active tab's rendered markdown, when it shows the preview.
+    pub(super) fn active_preview(&self) -> Option<Entity<TextViewState>> {
+        let file = self.open_files.get(self.active_file?)?;
+        match &file.content {
+            FileContent::Text {
+                markdown: Some(markdown),
+                ..
+            } if file.preview => Some(markdown.clone()),
+            _ => None,
+        }
+    }
+
     pub(super) fn open_selected_tree_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.file_tree.read(cx).selected_entry() else {
             return;
@@ -790,8 +802,10 @@ impl Workspace {
                 .text_size(cx.theme().mono_font_size)
                 .into_any_element(),
         };
+        let previewing = file.preview && markdown;
         v_flex()
             .id("file-pane")
+            .when(previewing, |this| this.key_context("MarkdownPreview"))
             .track_focus(&self.file_pane_focus)
             .size_full()
             .min_w_0()
@@ -876,6 +890,7 @@ impl Workspace {
                         ),
                 )
             })
+            .children(self.render_preview_find(cx))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }

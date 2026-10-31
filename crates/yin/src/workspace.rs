@@ -38,6 +38,7 @@ mod git_bar;
 mod history;
 mod lsp;
 mod palette;
+mod preview_find;
 mod pull_request;
 mod remote;
 mod review_all;
@@ -105,6 +106,8 @@ pub(crate) mod actions {
             CreatePullRequest,
             ReviewPullRequest,
             OpenPullRequest,
+            FindInPreview,
+            ClosePreviewFind,
         ]
     );
 }
@@ -236,6 +239,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("s", StageHunk, Some("Diff")),
         KeyBinding::new("n", AddNote, Some("Diff")),
         KeyBinding::new("cmd-alt-c", CopyReviewPrompt, Some("Workspace")),
+        KeyBinding::new("cmd-f", FindInPreview, Some("MarkdownPreview")),
+        KeyBinding::new("cmd-f", FindInPreview, Some("PreviewFind")),
+        KeyBinding::new("escape", ClosePreviewFind, Some("PreviewFind")),
     ]);
 }
 
@@ -296,6 +302,7 @@ pub struct Workspace {
     pull_request: Option<yin_git::PullRequest>,
     review_threads: Vec<yin_git::ReviewThread>,
     pr_check: Option<pull_request::PrCheck>,
+    preview_find: Option<preview_find::PreviewFind>,
     _pr_task: Task<()>,
     commit_detail: Option<history::CommitDetail>,
     history_diff: Entity<DiffState>,
@@ -440,6 +447,7 @@ impl Workspace {
             pull_request: None,
             review_threads: Vec::new(),
             pr_check: None,
+            preview_find: None,
             _pr_task: Task::ready(()),
             commit_detail: None,
             history_diff,
@@ -1610,6 +1618,11 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &OpenPullRequest, _, cx| {
                     this.open_pull_request_in_browser(cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &FindInPreview, window, cx| {
+                    this.open_preview_find(window, cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &CopyCommitHash, window, cx| {

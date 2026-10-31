@@ -74,6 +74,7 @@ current key.
 | `cmd-alt-b` | Blame (click a commit to open it) |
 | `cmd-alt-h` | History of this file |
 | `cmd-shift-v` | Markdown preview / source |
+| `cmd-f` in the preview | Find; `enter` / `shift-enter` for next / previous |
 
 ## Custom keys
 
