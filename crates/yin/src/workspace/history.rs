@@ -385,7 +385,9 @@ impl Workspace {
                         .line_number(true)
                         .render_header({
                             let state = self.history_diff.clone();
-                            move |file, _, cx| super::style::diff_file_header(file, &state, cx)
+                            move |file, _, cx| {
+                                super::style::diff_file_header(file, &state, None, cx)
+                            }
                         }),
                 ),
             )

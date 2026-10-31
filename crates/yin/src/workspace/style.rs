@@ -57,8 +57,14 @@ fn tag(label: &'static str, color: Hsla) -> Div {
 
 /// The header of a file in a diff: its name first, its folder muted, the
 /// change counts, and what happened to it when that's more than an edit.
-/// Clicking anywhere on it collapses or expands the file.
-pub(super) fn diff_file_header(file: &DiffFile, state: &Entity<DiffState>, cx: &App) -> AnyElement {
+/// `note`, such as how much of it is staged, shows quietly before the
+/// counts. Clicking anywhere on it collapses or expands the file.
+pub(super) fn diff_file_header(
+    file: &DiffFile,
+    state: &Entity<DiffState>,
+    note: Option<&'static str>,
+    cx: &App,
+) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let renamed_from = match (file.original_path(), file.modified_path()) {
         (Some(old), Some(new)) if old != new => Some(old.clone()),
@@ -115,6 +121,9 @@ pub(super) fn diff_file_header(file: &DiffFile, state: &Entity<DiffState>, cx: &
                     )
                 }),
         )
+        .when_some(note, |this, note| {
+            this.child(tag(note, cx.theme().muted_foreground))
+        })
         .children(status)
         .when(!file.is_binary(), |this| {
             this.child(counts(file.additions(), file.deletions(), cx))

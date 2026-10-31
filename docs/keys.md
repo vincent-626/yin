@@ -26,9 +26,8 @@ current key.
 | Key | Does |
 |---|---|
 | `j` / `k`, `[` / `]` | Move |
-| `enter` | Read the diff |
+| `enter` | Jump to the file in the diff |
 | `space` | Stage or unstage the file; mark a conflict resolved |
-| `a` | Every change in one diff / one file at a time |
 | `r` / `shift-r` | Mark the file / everything reviewed |
 | `h` | Hide or show reviewed files |
 | `c` | Write the commit message |
@@ -43,8 +42,8 @@ current key.
 | Key | Does |
 |---|---|
 | `shift-up` / `shift-down`, or drag line numbers | Select lines |
-| `space` | Stage (or in Staged, unstage) the selected lines |
-| `s` | Stage (or unstage) their whole hunk |
+| `space` | Stage the selected lines, or unstage them when they're all staged |
+| `s` | The same for their whole hunk |
 
 ## History, files and search
 

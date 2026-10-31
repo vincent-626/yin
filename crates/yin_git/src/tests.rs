@@ -692,3 +692,97 @@ fn blame_and_file_history() {
         "{patch}"
     );
 }
+
+#[test]
+fn stages_and_unstages_from_the_diff_against_head() {
+    let fx = committed(&lines(1..=30));
+    // Three hunks; the middle one is staged before the user picks anything.
+    let text = lines(1..=30)
+        .replace("line 2\n", "line two\n")
+        .replace("line 15\n", "line fifteen\n")
+        .replace("line 28\n", "line twenty-eight\nextra\n");
+    fx.write("f.txt", &text);
+    let unstaged = FilePatch::parse(&fx.repo.diff("f.txt", DiffTarget::Unstaged).unwrap()).unwrap();
+    let rows = unstaged.hunk_rows(new_pos(15));
+    fx.repo
+        .apply_to_index(&unstaged.select(&rows, false).unwrap(), false)
+        .unwrap();
+    let staged = || fx.repo.diff("f.txt", DiffTarget::Staged).unwrap();
+
+    // Line 29 of the working tree ("extra") is after the staged hunk, which
+    // changes no line counts, and after hunk one, which doesn't either.
+    let outcome = fx
+        .repo
+        .stage_from_head("f.txt", new_pos(29), new_pos(29), false)
+        .unwrap();
+    assert_eq!(outcome, PartialStage::Staged);
+    assert!(
+        staged().contains("+extra") && !staged().contains("twenty-eight"),
+        "{}",
+        staged()
+    );
+
+    // The rest of that hunk is unstaged, so the hunk stages.
+    fx.repo
+        .stage_from_head("f.txt", new_pos(28), new_pos(28), true)
+        .unwrap();
+    assert!(staged().contains("-line 28") && staged().contains("+line twenty-eight"));
+
+    // All staged now: the same hunk unstages, leaving the middle one staged.
+    let outcome = fx
+        .repo
+        .stage_from_head("f.txt", old_pos(28), old_pos(28), true)
+        .unwrap();
+    assert_eq!(outcome, PartialStage::Unstaged);
+    assert!(
+        !staged().contains("line 28") && !staged().contains("extra"),
+        "{}",
+        staged()
+    );
+    assert!(staged().contains("+line fifteen"));
+    assert!(!staged().contains("line two"));
+    assert_eq!(
+        fs::read_to_string(fx.repo.workdir().join("f.txt")).unwrap(),
+        text
+    );
+}
+
+#[test]
+fn maps_lines_through_a_patch() {
+    let fx = committed(&lines(1..=10));
+    fx.write(
+        "f.txt",
+        &lines(1..=10)
+            .replace("line 3\n", "")
+            .replace("line 7\n", "line 7\nnew a\nnew b\n"),
+    );
+    let patch = FilePatch::parse(&fx.repo.diff("f.txt", DiffTarget::Unstaged).unwrap()).unwrap();
+    assert_eq!(patch.map_line(Side::Old, 1), Some(1));
+    assert_eq!(patch.map_line(Side::Old, 3), None);
+    assert_eq!(patch.map_line(Side::Old, 5), Some(4));
+    assert_eq!(patch.map_line(Side::Old, 10), Some(11));
+    assert_eq!(patch.map_line(Side::New, 6), Some(7));
+    assert_eq!(patch.map_line(Side::New, 7), None);
+    assert_eq!(patch.map_line(Side::New, 9), Some(8));
+    assert_eq!(patch.map_line(Side::New, 11), Some(10));
+}
+
+#[test]
+fn unstages_an_addition_that_moved_lines() {
+    let fx = committed("fn main() {\n    println!(\"hello\");\n}\n");
+    fx.write(
+        "f.txt",
+        "fn main() {\n    let name = \"yin\";\n    println!(\"hello, {name}\");\n}\n",
+    );
+    fx.repo
+        .stage_from_head("f.txt", new_pos(2), new_pos(2), false)
+        .unwrap();
+    let staged = fx.repo.diff("f.txt", DiffTarget::Staged).unwrap();
+    assert!(staged.contains("+    let name"), "{staged}");
+    let outcome = fx
+        .repo
+        .stage_from_head("f.txt", new_pos(2), new_pos(2), false)
+        .unwrap();
+    assert_eq!(outcome, PartialStage::Unstaged);
+    assert_eq!(fx.repo.diff("f.txt", DiffTarget::Staged).unwrap(), "");
+}

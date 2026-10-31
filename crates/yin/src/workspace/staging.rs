@@ -9,7 +9,7 @@ use gpui_kit::component::{
 use gpui_kit::{
     AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _, Window, div,
 };
-use yin_git::{FilePatch, LinePosition, Side};
+use yin_git::{FileStatus, LinePosition, Side};
 
 use super::{Section, StageHunk, StageLines, Workspace};
 
@@ -25,99 +25,91 @@ fn position(side: DiffSide, line: usize) -> LinePosition {
 
 impl Workspace {
     /// Stages the diff's selected lines, or with `whole_hunk` the hunk they
-    /// start in. In the Staged section, unstages instead.
+    /// start in. Changes that are all staged already unstage instead.
     pub(super) fn stage_selection(
         &mut self,
         whole_hunk: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.review_all {
-            // The combined diff is against HEAD, not the index.
-            window.push_notification("Switch to one file (a) to stage lines.", cx);
-            return;
-        }
-        let Some(key) = self.diff_key.clone() else {
-            return;
-        };
-        let Some(range) = self.diff.read(cx).selected_lines() else {
-            window.push_notification("Select lines in the diff first.", cx);
-            return;
-        };
-        let reverse = match key.section {
-            Section::Staged => true,
-            Section::Changes => false,
-            Section::Untracked | Section::Conflicts => {
-                window.push_notification("Stage this file as a whole.", cx);
+        match self.selected_key().map(|key| key.section) {
+            Some(Section::Conflicts) => {
+                window.push_notification("Resolve the conflict, then mark it resolved.", cx);
                 return;
             }
-            Section::Stashes => {
+            Some(Section::Stashes) => {
                 window.push_notification("Pop the stash to stage its changes.", cx);
                 return;
             }
+            _ => {}
+        }
+        let Some(range) = self.all_diff.read(cx).selected_lines() else {
+            window.push_notification("Select lines in the diff first.", cx);
+            return;
         };
+        let path = range.path().to_string();
+        let whole_file_only = self
+            .status
+            .entries
+            .iter()
+            .any(|entry| entry.path == path && matches!(entry.status, FileStatus::Untracked));
+        if whole_file_only {
+            window.push_notification("Stage a new file as a whole (space in the list).", cx);
+            return;
+        }
         let start = position(range.side(), range.start());
         let end = position(range.end_side(), range.end());
-        let patch = self.diff_patch.clone();
-        self.run(
+        self.run_then(
             move |repo| {
-                let patch = FilePatch::parse(&patch)?;
-                let rows = if whole_hunk {
-                    patch.hunk_rows(start)
-                } else {
-                    patch.rows_between(start, end)
-                };
-                let partial = patch.select(&rows, reverse)?;
-                repo.apply_to_index(&partial, reverse)
+                repo.stage_from_head(&path, start, end, whole_hunk)
+                    .map(drop)
+            },
+            |this, _, cx| {
+                this.all_diff
+                    .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
             },
             window,
             cx,
         );
     }
 
-    /// Hints shown over the diff while lines are selected.
+    /// Hints floating over the diff while lines are selected. They float so
+    /// the lines don't move under the pointer when a selection starts.
     pub(super) fn render_selection_bar(
         &self,
         range: &DiffLineRange,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let section = self.diff_key.as_ref()?.section;
-        if !matches!(section, Section::Staged | Section::Changes) {
-            return None;
-        }
-        let verb = if section.is_staged() {
-            "Unstage"
-        } else {
-            "Stage"
-        };
+    ) -> AnyElement {
         let lines = if range.side() == range.end_side() {
             let count = range.start().abs_diff(range.end()) + 1;
             format!("{count} line{} selected", if count == 1 { "" } else { "s" })
         } else {
             "Lines selected".into()
         };
-        let hint = |action: &dyn gpui_kit::Action, label: String| {
+        let hint = |action: &dyn gpui_kit::Action, label: &'static str| {
             h_flex()
                 .gap_1()
                 .children(Kbd::binding_for_action(action, Some("Diff"), window))
                 .child(label)
         };
-        Some(
-            h_flex()
-                .flex_none()
-                .h_8()
-                .px_3()
-                .gap_4()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().secondary)
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(div().text_color(cx.theme().foreground).child(lines))
-                .child(hint(&StageLines, format!("{verb} lines")))
-                .child(hint(&StageHunk, format!("{verb} hunk")))
-                .into_any_element(),
-        )
+        h_flex()
+            .absolute()
+            .bottom_3()
+            .right_4()
+            .h_8()
+            .px_3()
+            .gap_4()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .shadow_md()
+            .bg(cx.theme().popover)
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(div().text_color(cx.theme().foreground).child(lines))
+            .child(hint(&StageLines, "Stage or unstage lines"))
+            .child(hint(&StageHunk, "Stage or unstage hunk"))
+            .into_any_element()
     }
 }

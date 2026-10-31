@@ -184,6 +184,11 @@ Each bullet is roughly one commit. A phase ends with something usable.
   rebase banner with Continue and Abort; merge commits start from git's message.
 - [x] Blame (`cmd-alt-b`) and file history (`cmd-alt-h`).
 - [x] Popovers get their own surface colour (the dark theme reused the editor's).
+- [x] One review diff: the Changes pane always shows every change against
+  HEAD; picking a file scrolls to it, and lines or hunks stage (or unstage, when
+  already staged) right there. Conflicts and stashes still show on their own.
+- [x] Git bar above the commit box: branch, fetch, pull, push and a menu with
+  every other git action. Sidebar tabs restyled (underline, icon and label).
 
 ## Known issues (upstream, gpui-component 0.8.1)
 - The first character typed right after `cmd-f` is lost. The find bar re-selects
@@ -217,5 +222,8 @@ Each bullet is roughly one commit. A phase ends with something usable.
 - 2026-10-30 — Line staging places a replacement where its selected deletion
   was; unselected deletions after it move behind the additions (git-gui's rule).
 - 2026-10-30 — Pull is fast-forward only; diverged branches are an error for now.
+- 2026-10-31 — Staging from the HEAD diff maps the picked lines through the
+  staged and unstaged diffs (`Repository::stage_from_head`): anything unstaged
+  stages, otherwise it unstages, as Zed toggles hunks. Replaces the one-file mode.
 - 2026-10-30 — Verify UI in the real app: `script/screenshot`, `script/drive`
   (System Events keystrokes) and `screencapture -l`.

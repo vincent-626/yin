@@ -1,5 +1,9 @@
-//! The all-changes view: every change against HEAD in one scrolling diff,
-//! for reviewing an agent's work as a whole.
+//! The changes diff: every change against HEAD in one scrolling diff, for
+//! reviewing an agent's work as a whole. Picking a file in the list scrolls
+//! to it; conflicts and stashes show on their own.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use gpui_kit::component::{
     ActiveTheme as _,
@@ -7,25 +11,23 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, IntoElement as _, ParentElement as _, Styled as _, div,
+    AnyElement, AppContext as _, Context, IntoElement as _, ParentElement as _, Styled as _,
+    Window, div,
 };
+use yin_git::FileStatus;
 
-use super::Workspace;
+use super::{Section, Workspace, style};
 
 impl Workspace {
-    pub(super) fn toggle_review_all(&mut self, cx: &mut Context<Self>) {
-        self.review_all = !self.review_all;
-        if self.review_all {
-            self.load_all_diff(cx);
-        }
-        cx.notify();
+    /// Whether the selected row is a conflict or a stash, which the main
+    /// pane shows by itself instead of the changes diff.
+    pub(super) fn shows_one_file(&self) -> bool {
+        self.selected_key()
+            .is_some_and(|key| matches!(key.section, Section::Conflicts | Section::Stashes))
     }
 
     /// Rebuilds the combined patch; keeps the scroll position when unchanged.
     pub(super) fn load_all_diff(&mut self, cx: &mut Context<Self>) {
-        if !self.review_all {
-            return;
-        }
         let repo = self.repo.clone();
         let status = self.status.clone();
         let hidden = self.hidden_paths();
@@ -64,7 +66,7 @@ impl Workspace {
         }
     }
 
-    pub(super) fn render_all_diff(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_all_diff(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         if self.all_diff.read(cx).files().is_empty() {
             return v_flex()
                 .size_full()
@@ -72,21 +74,65 @@ impl Workspace {
                 .justify_center()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child(if self.hide_reviewed && !self.reviewed.is_empty() {
+                .child(if !self.loaded {
+                    "Reading status…"
+                } else if self.hide_reviewed && !self.reviewed.is_empty() {
                     "Everything is reviewed"
                 } else {
                     "Nothing to review"
                 })
                 .into_any_element();
         }
-        div()
+        let selection_bar = self
+            .all_diff
+            .read(cx)
+            .selected_lines()
+            .map(|range| self.render_selection_bar(&range, window, cx));
+        // How much of each file is staged, for its header.
+        let staging: Arc<HashMap<String, Staging>> = Arc::new(
+            self.status
+                .entries
+                .iter()
+                .filter_map(|entry| match entry.status {
+                    FileStatus::Tracked { index, worktree } if index.is_changed() => Some((
+                        entry.path.clone(),
+                        if worktree.is_changed() {
+                            Staging::Partly
+                        } else {
+                            Staging::Fully
+                        },
+                    )),
+                    _ => None,
+                })
+                .collect(),
+        );
+        v_flex()
+            .relative()
             .size_full()
             .min_w_0()
             .min_h_0()
-            .child(Diff::new(&self.all_diff).line_number(true).render_header({
-                let state = self.all_diff.clone();
-                move |file, _, cx| super::style::diff_file_header(file, &state, cx)
-            }))
+            .child(div().flex_1().min_h_0().child(
+                Diff::new(&self.all_diff).line_number(true).render_header({
+                    let state = self.all_diff.clone();
+                    move |file, _, cx| {
+                        let staged =
+                            staging
+                                .get(file.path().as_ref())
+                                .map(|staging| match staging {
+                                    Staging::Fully => "Staged",
+                                    Staging::Partly => "Partly staged",
+                                });
+                        style::diff_file_header(file, &state, staged, cx)
+                    }
+                }),
+            ))
+            .children(selection_bar)
             .into_any_element()
     }
+}
+
+#[derive(Clone, Copy)]
+enum Staging {
+    Fully,
+    Partly,
 }

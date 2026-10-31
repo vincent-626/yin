@@ -17,8 +17,8 @@ It is dark only (always yin, never yang) and runs on Apple Silicon Macs.
 **Review**
 - The working tree's changes, staged, unstaged and untracked, with a
   syntax-highlighted diff that updates as files change on disk.
-- One file at a time, or every change in one scrolling diff.
-- Stage or unstage whole files, hunks or individual lines.
+- Every change in one scrolling diff; picking a file jumps to it.
+- Stage or unstage whole files, hunks or individual lines, right in that diff.
 - Mark files reviewed and hide them; a file comes back the moment an agent
   touches it again.
 
@@ -66,8 +66,8 @@ them when it finds them and says so when it doesn't.
 ## Using it
 
 yin opens on the **Changes** tab. Move with `j`/`k`, stage with `space`, press
-`c` to write a message and `cmd-enter` to commit. `a` switches between one file
-and every change. `cmd-1` to `cmd-3` switch between Changes, History and Files;
+`c` to write a message and `cmd-enter` to commit. Every git action is in the
+bar above the commit box. `cmd-1` to `cmd-3` switch between Changes, History and Files;
 `cmd-p` finds a file and `cmd-shift-f` searches the project.
 
 Everything else is in the command palette (`cmd-shift-p`) and in

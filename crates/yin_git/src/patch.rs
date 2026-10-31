@@ -132,6 +132,45 @@ impl FilePatch {
         })
     }
 
+    /// Where line `line` of side `from` sits on the other side, or `None`
+    /// when this patch deletes or adds it.
+    pub fn map_line(&self, from: Side, line: usize) -> Option<usize> {
+        let on = |row: &Row, side: Side| match side {
+            Side::Old => row.old_line,
+            Side::New => row.new_line,
+        };
+        let to = match from {
+            Side::Old => Side::New,
+            Side::New => Side::Old,
+        };
+        let mut drift: isize = 0;
+        for hunk in &self.hunks {
+            let start = match from {
+                Side::Old => hunk.old_start,
+                Side::New => hunk.new_start,
+            };
+            let before = match hunk.rows.iter().find_map(|row| on(row, from)) {
+                Some(first) => line < first,
+                // A hunk with nothing on this side sits after line `start`.
+                None => line <= start,
+            };
+            if before {
+                return Some(line.saturating_add_signed(drift));
+            }
+            if let Some(row) = hunk.rows.iter().find(|row| on(row, from) == Some(line)) {
+                return on(row, to);
+            }
+            let count = |side| {
+                hunk.rows
+                    .iter()
+                    .filter(|row| on(row, side).is_some())
+                    .count()
+            };
+            drift += count(to) as isize - count(from) as isize;
+        }
+        Some(line.saturating_add_signed(drift))
+    }
+
     /// Row indices from `start` through `end` in patch order, either way round.
     pub fn rows_between(&self, start: LinePosition, end: LinePosition) -> Vec<usize> {
         let (Some(a), Some(b)) = (self.row_index(start), self.row_index(end)) else {

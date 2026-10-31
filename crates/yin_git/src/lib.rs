@@ -18,6 +18,13 @@ pub use history::{BlameLine, BranchRef, Commit, Stash, Worktree};
 pub use patch::{FilePatch, LinePosition, RowKind, Side};
 pub use status::{Branch, Change, FileStatus, Status, StatusEntry};
 
+/// What [`Repository::stage_from_head`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartialStage {
+    Staged,
+    Unstaged,
+}
+
 /// A git working tree, addressed by its top-level directory.
 #[derive(Clone, Debug)]
 pub struct Repository {
@@ -199,12 +206,7 @@ impl Repository {
             .collect();
         let mut patch = String::new();
         if !tracked.is_empty() {
-            // The empty tree's id: diffing against it shows everything as added.
-            let base = if self.has_head() {
-                "HEAD"
-            } else {
-                "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-            };
+            let base = self.head_or_empty_tree();
             patch = self.git(
                 ["diff", base]
                     .iter()
@@ -220,6 +222,98 @@ impl Repository {
             patch.push_str(&self.diff(&entry.path, DiffTarget::Untracked)?);
         }
         Ok(patch)
+    }
+
+    /// Stages the changes picked from `path`'s diff against HEAD: the rows from
+    /// `start` to `end`, or with `whole_hunk` the hunk `start` is in. When all
+    /// of them are staged already, unstages them instead.
+    pub fn stage_from_head(
+        &self,
+        path: &str,
+        start: LinePosition,
+        end: LinePosition,
+        whole_hunk: bool,
+    ) -> Result<PartialStage> {
+        let head = self.git(
+            ["diff", self.head_or_empty_tree()]
+                .iter()
+                .chain(DIFF_ARGS)
+                .chain(&["--", path]),
+        )?;
+        let head = FilePatch::parse(&head)?;
+        let picked = if whole_hunk {
+            head.hunk_rows(start)
+        } else {
+            head.rows_between(start, end)
+        };
+        // The picked changes, by HEAD line (deletions) and working tree line
+        // (additions); both sides are the same in every diff below.
+        let mut removed = std::collections::HashSet::new();
+        let mut added = std::collections::HashSet::new();
+        for (ix, row) in head.rows().enumerate() {
+            if !picked.contains(&ix) {
+                continue;
+            }
+            match row.kind {
+                RowKind::Deletion => removed.extend(row.old_line),
+                RowKind::Addition => added.extend(row.new_line),
+                RowKind::Context => {}
+            }
+        }
+        if removed.is_empty() && added.is_empty() {
+            bail!("the selection contains no changes");
+        }
+        let staged = FilePatch::parse(&self.diff(path, DiffTarget::Staged)?)?;
+        let unstaged = FilePatch::parse(&self.diff(path, DiffTarget::Unstaged)?)?;
+        // Unstaged rows: additions are working tree lines, deletions index
+        // lines, which the staged diff maps back to HEAD.
+        let to_stage: Vec<usize> = unstaged
+            .rows()
+            .enumerate()
+            .filter(|(_, row)| match row.kind {
+                RowKind::Addition => row.new_line.is_some_and(|line| added.contains(&line)),
+                RowKind::Deletion => row
+                    .old_line
+                    .and_then(|line| staged.map_line(Side::New, line))
+                    .is_some_and(|line| removed.contains(&line)),
+                RowKind::Context => false,
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        if !to_stage.is_empty() {
+            self.apply_to_index(&unstaged.select(&to_stage, false)?, false)?;
+            return Ok(PartialStage::Staged);
+        }
+        // Staged rows: deletions are HEAD lines, additions index lines, which
+        // the unstaged diff maps on to the working tree.
+        let to_unstage: Vec<usize> = staged
+            .rows()
+            .enumerate()
+            .filter(|(_, row)| match row.kind {
+                RowKind::Deletion => row.old_line.is_some_and(|line| removed.contains(&line)),
+                RowKind::Addition => row
+                    .new_line
+                    .and_then(|line| unstaged.map_line(Side::Old, line))
+                    .is_some_and(|line| added.contains(&line)),
+                RowKind::Context => false,
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        if to_unstage.is_empty() {
+            bail!("the selection contains no changes");
+        }
+        self.apply_to_index(&staged.select(&to_unstage, true)?, true)?;
+        Ok(PartialStage::Unstaged)
+    }
+
+    /// HEAD, or the empty tree before the first commit, so diffing against
+    /// it shows everything as added.
+    fn head_or_empty_tree(&self) -> &'static str {
+        if self.has_head() {
+            "HEAD"
+        } else {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        }
     }
 
     /// Stages `paths`, including deletions.

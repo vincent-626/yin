@@ -4,7 +4,7 @@ use gpui_kit::{AssetSource, Result, SharedString};
 
 // Icons beyond gpui-kit's default component set. Reference them with
 // `Icon::empty().path("icons/<name>.svg")`.
-gpui_kit::assets::icon_assets!(ExtraIcons, [GitBranch]);
+gpui_kit::assets::icon_assets!(ExtraIcons, [GitBranch, FileDiff, GitGraph, Folder]);
 
 /// yin's icons first, then gpui-kit's defaults.
 pub struct Assets;

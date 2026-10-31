@@ -176,13 +176,15 @@ fn stages_then_unstages_selected_lines_from_the_diff(cx: &mut TestAppContext) {
         "only the addition was selected: {staged}"
     );
 
-    // Select the Staged entry, then unstage that hunk.
-    cx.update(|cx| {
-        workspace.update(cx, |workspace, cx| {
-            workspace.select_path_in_staged("f.txt", cx)
-        })
-    });
-    cx.run_until_parked();
+    // Part of the hunk is still unstaged, so the hunk stages.
+    select(cx, DiffSide::Modified, 18);
+    dispatch(cx, actions::StageHunk.boxed_clone());
+    let staged = git(path, &["diff", "--cached"]);
+    assert!(
+        staged.contains("-line 18") && staged.contains("+line eighteen"),
+        "{staged}"
+    );
+    // All of it is staged now, so the same key unstages it.
     select(cx, DiffSide::Modified, 18);
     dispatch(cx, actions::StageHunk.boxed_clone());
     assert_eq!(git(path, &["diff", "--cached"]), "");

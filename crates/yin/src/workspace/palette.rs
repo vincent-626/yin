@@ -20,9 +20,6 @@ fn commands() -> Vec<(&'static str, MakeAction)> {
         ("Unstage all", || Box::new(UnstageAll)),
         ("Stage or unstage file", || Box::new(ToggleStaged)),
         ("Discard file", || Box::new(Discard)),
-        ("Review all changes / one file", || {
-            Box::new(ToggleReviewAll)
-        }),
         ("Mark file reviewed", || Box::new(ToggleReviewed)),
         ("Mark everything reviewed", || Box::new(MarkAllReviewed)),
         ("Hide or show reviewed files", || {

@@ -34,6 +34,7 @@ mod branches;
 mod conflicts;
 mod files;
 mod finder;
+mod git_bar;
 mod history;
 mod lsp;
 mod palette;
@@ -90,7 +91,6 @@ pub(crate) mod actions {
             MarkAllReviewed,
             ToggleHideReviewed,
             SwitchWorktree,
-            ToggleReviewAll,
             CommandPalette,
             FileHistory,
             ToggleBlame,
@@ -174,7 +174,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-r", MarkAllReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("h", ToggleHideReviewed, Some(CHANGES_CONTEXT)),
         KeyBinding::new("w", SwitchWorktree, Some(CHANGES_CONTEXT)),
-        KeyBinding::new("a", ToggleReviewAll, Some(CHANGES_CONTEXT)),
         KeyBinding::new("cmd-alt-w", SwitchWorktree, Some("Workspace")),
         KeyBinding::new("s", StashPush, Some(CHANGES_CONTEXT)),
         KeyBinding::new("shift-s", StashPop, Some(CHANGES_CONTEXT)),
@@ -234,8 +233,7 @@ pub struct Workspace {
     review_hashes: std::collections::HashMap<String, u64>,
     reviewed: Arc<std::collections::HashSet<String>>,
     hide_reviewed: bool,
-    /// The main pane shows every change at once instead of one file.
-    review_all: bool,
+    /// Every change against HEAD, in one scrolling diff.
     all_diff: Entity<DiffState>,
     all_patch: String,
     _all_task: Task<()>,
@@ -367,7 +365,6 @@ impl Workspace {
             review_hashes: Default::default(),
             reviewed: Arc::default(),
             hide_reviewed: false,
-            review_all: false,
             all_diff,
             all_patch: String::new(),
             _all_task: Task::ready(()),
@@ -515,17 +512,12 @@ impl Workspace {
     }
 
     #[cfg(test)]
-    pub fn select_path_in_staged(&mut self, path: &str, cx: &mut Context<Self>) {
-        let ix = self.rows.iter().position(|row| {
-            row.key()
-                .is_some_and(|key| key.section == Section::Staged && key.path == path)
-        });
-        self.select(ix, cx);
-    }
-
-    #[cfg(test)]
     pub fn diff_state(&self) -> Entity<DiffState> {
-        self.diff.clone()
+        if self.shows_one_file() {
+            self.diff.clone()
+        } else {
+            self.all_diff.clone()
+        }
     }
 
     #[cfg(test)]
@@ -565,8 +557,9 @@ impl Workspace {
             .or(self.active_file);
         if session.split_diff {
             self.diff_mode = DiffMode::Split;
-            self.diff
-                .update(cx, |diff, cx| diff.set_mode(DiffMode::Split, cx));
+            for diff in [&self.diff, &self.all_diff] {
+                diff.update(cx, |diff, cx| diff.set_mode(DiffMode::Split, cx));
+            }
         }
         self.sidebar_width = session.sidebar_width.filter(|width| *width >= 150.);
         let panel = Panel::from_name(&session.panel).unwrap_or(Panel::Changes);
@@ -667,9 +660,7 @@ impl Workspace {
                 .scroll_to_item(ix, ScrollStrategy::Nearest);
         }
         self.load_diff(cx);
-        if self.review_all {
-            self.scroll_all_diff_to_selection(cx);
-        }
+        self.scroll_all_diff_to_selection(cx);
         cx.notify();
     }
 
@@ -948,8 +939,8 @@ impl Workspace {
 
     fn focus_diff(&self, window: &mut Window, cx: &mut Context<Self>) {
         let diff = match self.panel {
-            Panel::Changes if self.review_all => &self.all_diff,
-            Panel::Changes => &self.diff,
+            Panel::Changes if self.shows_one_file() => &self.diff,
+            Panel::Changes => &self.all_diff,
             Panel::History => &self.history_diff,
             Panel::Files | Panel::Search => return self.focus_active_file(window, cx),
         };
@@ -987,31 +978,47 @@ impl Workspace {
             .min_h_0()
             .bg(cx.theme().sidebar)
             .child(
-                h_flex()
+                TabBar::new("sidebar-tabs")
+                    .underline()
+                    .small()
+                    .w_full()
                     .flex_none()
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
+                    .px_1()
+                    .selected_index(self.panel.index())
+                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                        let panel = Panel::ALL.get(*ix).copied().unwrap_or(Panel::Changes);
+                        this.show_panel(panel, window, cx);
+                    }))
                     .child(
-                        TabBar::new("sidebar-tabs")
-                            .segmented()
-                            .w_full()
-                            .selected_index(self.panel.index())
-                            .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                                let panel = Panel::ALL.get(*ix).copied().unwrap_or(Panel::Changes);
-                                this.show_panel(panel, window, cx);
-                            }))
-                            .child(Tab::new().flex_1().label(format!(
-                                "Changes{}",
-                                match self.status.entries.len() {
-                                    0 => String::new(),
-                                    n => format!(" {n}"),
-                                }
-                            )))
-                            .child(Tab::new().flex_1().label("History"))
-                            .child(Tab::new().flex_1().label("Files"))
-                            .child(Tab::new().flex_1().label("Search")),
+                        Tab::new()
+                            .prefix(tab_icon(Icon::empty().path("icons/file-diff.svg"), cx))
+                            .label("Changes")
+                            .when(!self.status.entries.is_empty(), |tab| {
+                                tab.suffix(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(self.status.entries.len().to_string()),
+                                )
+                            }),
+                    )
+                    .child(
+                        Tab::new()
+                            .prefix(tab_icon(Icon::empty().path("icons/git-graph.svg"), cx))
+                            .label("History"),
+                    )
+                    .child(
+                        Tab::new()
+                            .prefix(tab_icon(Icon::empty().path("icons/folder.svg"), cx))
+                            .label("Files"),
+                    )
+                    .child(
+                        Tab::new()
+                            .prefix(tab_icon(
+                                Icon::new(gpui_kit::component::IconName::Search),
+                                cx,
+                            ))
+                            .label("Search"),
                     ),
             )
             .map(|this| match self.panel {
@@ -1023,12 +1030,7 @@ impl Workspace {
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let branch = &self.status.branch;
-        let head = match (&branch.head, &branch.oid) {
-            (Some(head), _) => head.clone(),
-            (None, Some(oid)) => format!("detached at {}", &oid[..oid.len().min(7)]),
-            (None, None) => "no commits".into(),
-        };
+        let head = self.head_label();
         TitleBar::new().child(
             h_flex()
                 .size_full()
@@ -1046,9 +1048,7 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.open_branch_picker(window, cx)),
                         ),
                 )
-                .child(div().flex_1())
-                .child(self.render_sync_buttons(cx))
-                .child(div().w_2()),
+                .child(div().flex_1()),
         )
     }
 
@@ -1067,38 +1067,6 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .children(self.render_merge_banner(cx))
-            .child(
-                h_flex()
-                    .flex_none()
-                    .px_3()
-                    .py_1()
-                    .gap_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(div().flex_1().child(if self.review_all {
-                        "Reviewing all changes"
-                    } else {
-                        "Reviewing one file"
-                    }))
-                    .child(
-                        Button::new("toggle-review-all")
-                            .ghost()
-                            .xsmall()
-                            .label(if self.review_all {
-                                "One file"
-                            } else {
-                                "All changes"
-                            })
-                            .tooltip_with_action(
-                                "Switch view",
-                                &ToggleReviewAll,
-                                Some(CHANGES_CONTEXT),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_review_all(cx))),
-                    ),
-            )
             .when(hidden > 0, |this| {
                 this.child(
                     div()
@@ -1153,10 +1121,10 @@ impl Workspace {
                     )
                     .child(Scrollbar::vertical(&self.changes_scroll)),
             )
-            .child(self.render_commit_box(cx))
+            .child(self.render_commit_box(window, cx))
     }
 
-    fn render_commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_commit_box(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_message = !self.commit_message.read(cx).value().trim().is_empty();
         let can_commit =
             !self.busy && has_message && (self.amend || self.status.staged().next().is_some());
@@ -1166,6 +1134,7 @@ impl Workspace {
             .gap_2()
             .border_t_1()
             .border_color(cx.theme().border)
+            .child(self.render_git_bar(window, cx))
             .child(Textarea::new(&self.commit_message).small())
             .child(
                 h_flex()
@@ -1197,12 +1166,9 @@ impl Workspace {
             )
     }
 
-    fn render_diff(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_diff(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let empty = self.diff.read(cx).files().is_empty();
-        let selection = self.diff.read(cx).selected_lines();
-        let selection_bar = selection
-            .and_then(|range| self.render_selection_bar(&range, window, cx))
-            .or_else(|| self.render_conflict_bar(cx));
+        let selection_bar = self.render_conflict_bar(cx);
         v_flex()
             .size_full()
             .min_w_0()
@@ -1231,12 +1197,20 @@ impl Workspace {
                     this.child(div().flex_1().min_h_0().child(
                         Diff::new(&self.diff).line_number(true).render_header({
                             let state = self.diff.clone();
-                            move |file, _, cx| style::diff_file_header(file, &state, cx)
+                            move |file, _, cx| style::diff_file_header(file, &state, None, cx)
                         }),
                     ))
                 }
             })
     }
+}
+
+/// An icon in front of a sidebar tab's label.
+fn tab_icon(icon: Icon, cx: &App) -> impl IntoElement {
+    div()
+        .pl_1()
+        .text_color(cx.theme().muted_foreground)
+        .child(icon.size_3())
 }
 
 /// Uses NSFileManager rather than the crate's default of scripting Finder,
@@ -1419,6 +1393,8 @@ impl Render for Workspace {
                 };
                 let mode = this.diff_mode;
                 this.diff.update(cx, |state, cx| state.set_mode(mode, cx));
+                this.all_diff
+                    .update(cx, |state, cx| state.set_mode(mode, cx));
             }))
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| match this.panel {
                 Panel::Changes => {
@@ -1485,7 +1461,6 @@ impl Render for Workspace {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleReviewed, _, cx| this.toggle_reviewed(cx)))
-            .on_action(cx.listener(|this, _: &ToggleReviewAll, _, cx| this.toggle_review_all(cx)))
             .on_action(
                 cx.listener(|this, _: &CommandPalette, window, cx| this.open_palette(window, cx)),
             )
@@ -1577,8 +1552,10 @@ impl Render for Workspace {
                             )
                         })
                         .child(resizable_panel().child(match self.panel {
-                            Panel::Changes if self.review_all => self.render_all_diff(cx),
-                            Panel::Changes => self.render_diff(window, cx).into_any_element(),
+                            Panel::Changes if self.shows_one_file() => {
+                                self.render_diff(cx).into_any_element()
+                            }
+                            Panel::Changes => self.render_all_diff(window, cx),
                             Panel::History => self.render_commit_detail(cx),
                             Panel::Files | Panel::Search => self.render_open_files(cx),
                         })),
