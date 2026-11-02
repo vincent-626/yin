@@ -47,6 +47,7 @@ fn main() {
         // The dark theme gives popovers the editor's own background, so
         // hover cards and menus had no edge; lift them one step.
         Theme::update(cx, |theme| theme.popover = hsla(0., 0., 0.09, 1.));
+        shell::restore_zoom(cx);
 
         let (pressed, pressed_rx) = async_channel::unbounded::<()>();
         let registered = keymap::global_hotkey().and_then(|key| match key {

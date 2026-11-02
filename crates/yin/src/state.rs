@@ -82,6 +82,23 @@ pub fn save_session(workdir: &Path, session: &Session) {
     }
 }
 
+/// Points added to every font size (`cmd-=` / `cmd--`).
+pub fn load_zoom() -> i32 {
+    state_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("zoom")).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn save_zoom(level: i32) {
+    let Some(dir) = state_dir() else { return };
+    let result = std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(dir.join("zoom"), level.to_string()));
+    if let Err(error) = result {
+        eprintln!("yin: couldn't save the zoom: {error}");
+    }
+}
+
 /// `~/Code/yin` rather than `/Users/me/Code/yin`.
 pub fn tilde(path: &Path) -> String {
     let shown = path.display().to_string();

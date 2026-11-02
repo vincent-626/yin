@@ -4,7 +4,7 @@
 use anyhow::Result;
 
 use crate::history::{self, Commit};
-use crate::{DIFF_ARGS, Repository};
+use crate::{DIFF_ARGS, Repository, WHOLE_FILES};
 
 /// Branches stacked from trunk up to the current one and beyond: each layer
 /// is a branch whose base is the layer below it.
@@ -54,7 +54,7 @@ impl Repository {
     }
 
     fn diff_between(&self, from: &str, to: &str, path: Option<&str>) -> Result<String> {
-        let mut args: Vec<&str> = vec!["diff"];
+        let mut args: Vec<&str> = vec!["diff", WHOLE_FILES];
         args.extend(DIFF_ARGS);
         args.extend([from, to, "--"]);
         args.extend(path);

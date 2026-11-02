@@ -17,6 +17,10 @@ gpui_kit::assets::icon_assets!(
         ExternalLink,
         Trash,
         MessageSquareText,
+        UnfoldVertical,
+        FoldVertical,
+        ChevronsDownUp,
+        ChevronsUpDown,
     ]
 );
 

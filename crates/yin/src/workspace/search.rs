@@ -154,6 +154,7 @@ impl Workspace {
                     }
                 }
                 search.selected = None;
+                this.refresh_search_marks(cx);
                 cx.notify();
             })
             .ok();
@@ -229,6 +230,14 @@ impl Workspace {
             return;
         };
         self.open_file(&found.path, Some(found.line as u32), window, cx);
+        if let Some(ix) = self
+            .open_files
+            .iter()
+            .position(|file| file.path == found.path)
+        {
+            self.open_files[ix].marks.show_search = true;
+            self.mark_search_matches(ix, cx);
+        }
     }
 
     pub(super) fn render_search(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {

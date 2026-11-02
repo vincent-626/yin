@@ -23,7 +23,10 @@ use crate::workspace::{OpenRepository, Workspace};
 use crate::{state, windows};
 
 mod actions {
-    gpui_kit::actions!(yin, [Open, Quit, SwitchRepository]);
+    gpui_kit::actions!(
+        yin,
+        [Open, Quit, SwitchRepository, ZoomIn, ZoomOut, ResetZoom]
+    );
 }
 pub use actions::*;
 
@@ -32,9 +35,16 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", SwitchRepository, None),
         KeyBinding::new("cmd-shift-o", Open, None),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ResetZoom, None),
     ]);
     // Quit can arrive with focus anywhere, or with no window at all.
     cx.on_action(|_: &Quit, cx| windows::quit(cx));
+    cx.on_action(|_: &ZoomIn, cx| zoom(Some(1), cx));
+    cx.on_action(|_: &ZoomOut, cx| zoom(Some(-1), cx));
+    cx.on_action(|_: &ResetZoom, cx| zoom(None, cx));
     cx.set_menus([
         Menu::new("yin").items([MenuItem::action("Quit yin", Quit)]),
         Menu::new("File").items([
@@ -42,6 +52,51 @@ pub fn init(cx: &mut App) {
             MenuItem::action("Open Folder…", Open),
         ]),
     ]);
+}
+
+/// The theme's font sizes before any zoom, in points.
+struct BaseFontSizes {
+    ui: f32,
+    mono: f32,
+}
+
+impl gpui_kit::Global for BaseFontSizes {}
+
+/// How far the font sizes may move from the defaults, in points.
+const ZOOM_RANGE: std::ops::RangeInclusive<i32> = -4..=12;
+
+/// Applies the saved zoom; call once the theme is set up.
+pub fn restore_zoom(cx: &mut App) {
+    let theme = gpui_kit::component::Theme::global(cx);
+    let base = BaseFontSizes {
+        ui: theme.font_size.into(),
+        mono: theme.mono_font_size.into(),
+    };
+    cx.set_global(base);
+    apply_zoom(state::load_zoom(), cx);
+}
+
+/// Grows or shrinks every font by `step` points, or with `None` goes back to
+/// the defaults. Applies to all windows and is remembered.
+fn zoom(step: Option<i32>, cx: &mut App) {
+    let level = match step {
+        Some(step) => (state::load_zoom() + step).clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end()),
+        None => 0,
+    };
+    state::save_zoom(level);
+    apply_zoom(level, cx);
+}
+
+fn apply_zoom(level: i32, cx: &mut App) {
+    let Some(base) = cx.try_global::<BaseFontSizes>() else {
+        return;
+    };
+    let (ui, mono) = (base.ui + level as f32, base.mono + level as f32);
+    gpui_kit::component::Theme::update(cx, |theme| {
+        theme.font_size = gpui_kit::px(ui);
+        theme.mono_font_size = gpui_kit::px(mono);
+    });
+    cx.refresh_windows();
 }
 
 pub struct Shell {

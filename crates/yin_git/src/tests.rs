@@ -543,7 +543,7 @@ fn diff_all_combines_staged_unstaged_and_untracked() {
     let status = fx.repo.status().unwrap();
     let patch = fx
         .repo
-        .diff_all(&status, &|path| path == "hidden.txt")
+        .diff_all(&status, &|path| path == "hidden.txt", &|_| false)
         .unwrap();
     assert!(
         patch.contains("+staged") && patch.contains("+unstaged"),
@@ -560,10 +560,36 @@ fn diff_all_combines_staged_unstaged_and_untracked() {
     assert!(
         fresh
             .repo
-            .diff_all(&status, &|_| false)
+            .diff_all(&status, &|_| false, &|_| false)
             .unwrap()
             .contains("+x")
     );
+}
+
+#[test]
+fn diff_all_gives_chosen_files_whole() {
+    let long: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    let fx = Fixture::new();
+    fx.commit("a.txt", &long, "a");
+    fx.commit("b.txt", &long, "b");
+    fx.commit("c.txt", &long, "c");
+    for path in ["a.txt", "b.txt", "c.txt"] {
+        fx.write(path, &long.replace("line 15\n", "line fifteen\n"));
+    }
+    let status = fx.repo.status().unwrap();
+    let patch = fx
+        .repo
+        .diff_all(&status, &|_| false, &|path| path == "b.txt")
+        .unwrap();
+    let files: Vec<&str> = patch
+        .lines()
+        .filter_map(|line| line.strip_prefix("+++ b/"))
+        .collect();
+    assert_eq!(files, ["a.txt", "b.txt", "c.txt"], "git's order survives");
+    let b = FilePatch::of_file(&patch, "b.txt", Side::New).unwrap();
+    assert_eq!(b.rows().count(), 31, "the whole file, plus the deletion");
+    let a = FilePatch::of_file(&patch, "a.txt", Side::New).unwrap();
+    assert_eq!(a.rows().count(), 8, "three lines either side");
 }
 
 #[test]
@@ -933,4 +959,15 @@ fn finds_quoted_code_after_it_moves() {
     assert!(file.find_lines(Side::New, &code(&["a", "b"])).is_empty());
     assert!(file.find_lines(Side::New, &code(&["gone"])).is_empty());
     assert!(FilePatch::of_file(patch, "z.rs", Side::New).is_none());
+}
+
+#[test]
+fn splits_a_multi_file_patch() {
+    let patch = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-a\n+b\n\
+                 diff --git a/gone.rs b/gone.rs\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-c\n";
+    let files = FilePatch::split(patch);
+    let paths: Vec<_> = files.iter().map(|f| f.path()).collect();
+    assert_eq!(paths, [Some("x.rs"), Some("gone.rs")]);
+    assert_eq!(files[1].rows().next().unwrap().text(), "c");
+    assert!(FilePatch::split("").is_empty());
 }

@@ -32,11 +32,13 @@ mod annotations;
 mod blame;
 mod branches;
 mod conflicts;
+mod diff_bar;
 mod files;
 mod finder;
 mod git_bar;
 mod history;
 mod lsp;
+mod marks;
 mod palette;
 mod preview_find;
 mod pull_request;
@@ -108,6 +110,10 @@ pub(crate) mod actions {
             OpenPullRequest,
             FindInPreview,
             ClosePreviewFind,
+            FindInDiff,
+            CloseDiffFind,
+            ToggleCollapseAll,
+            OpenInFile,
         ]
     );
 }
@@ -242,6 +248,13 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-f", FindInPreview, Some("MarkdownPreview")),
         KeyBinding::new("cmd-f", FindInPreview, Some("PreviewFind")),
         KeyBinding::new("escape", ClosePreviewFind, Some("PreviewFind")),
+        // Text inputs and previews bind cmd-f deeper, so it only gets here
+        // from the diffs and lists.
+        KeyBinding::new("cmd-f", FindInDiff, Some("Workspace")),
+        KeyBinding::new("escape", CloseDiffFind, Some("DiffFind")),
+        // As in Zed; alt-enter too, since launchers often take alt-space.
+        KeyBinding::new("alt-space", OpenInFile, Some("Workspace")),
+        KeyBinding::new("alt-enter", OpenInFile, Some("Workspace")),
     ]);
 }
 
@@ -310,6 +323,9 @@ pub struct Workspace {
     review_threads: Vec<yin_git::ReviewThread>,
     pr_check: Option<pull_request::PrCheck>,
     preview_find: Option<preview_find::PreviewFind>,
+    diff_find: Option<diff_bar::DiffFind>,
+    /// Files the changes diff shows whole, not just around their changes.
+    whole_files: Arc<std::collections::HashSet<String>>,
     _pr_task: Task<()>,
     commit_detail: Option<history::CommitDetail>,
     history_diff: Entity<DiffState>,
@@ -463,6 +479,8 @@ impl Workspace {
             review_threads: Vec::new(),
             pr_check: None,
             preview_find: None,
+            diff_find: None,
+            whole_files: Arc::default(),
             _pr_task: Task::ready(()),
             commit_detail: None,
             history_diff,
@@ -1662,6 +1680,17 @@ impl Render for Workspace {
                 cx.listener(|this, _: &OpenPullRequest, _, cx| {
                     this.open_pull_request_in_browser(cx)
                 }),
+            )
+            .on_action(
+                cx.listener(|this, _: &FindInDiff, window, cx| this.open_diff_find(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &ToggleCollapseAll, _, cx| {
+                if let Some(pane) = this.active_pane() {
+                    this.toggle_collapse_all(pane, cx)
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &OpenInFile, window, cx| this.open_in_file(window, cx)),
             )
             .on_action(
                 cx.listener(|this, _: &FindInPreview, window, cx| {

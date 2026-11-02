@@ -42,6 +42,35 @@ pub enum InProgress {
     Rebase,
 }
 
+/// Joins two multi-file patches, ordering files by path as git would.
+fn merge_by_path(a: &str, b: &str) -> String {
+    if b.is_empty() {
+        return a.to_owned();
+    }
+    if a.is_empty() {
+        return b.to_owned();
+    }
+    let mut files: Vec<&str> = file_sections(a).chain(file_sections(b)).collect();
+    files.sort_by_key(|file| {
+        file.lines()
+            .next()
+            .and_then(|line| line.rsplit_once(" b/"))
+            .map(|(_, path)| path)
+    });
+    files.concat()
+}
+
+/// Each file's part of a patch, from its `diff --git` line.
+fn file_sections(patch: &str) -> impl Iterator<Item = &str> {
+    let mut starts: Vec<usize> = patch
+        .match_indices("diff --git ")
+        .map(|(ix, _)| ix)
+        .filter(|ix| *ix == 0 || patch.as_bytes()[ix - 1] == b'\n')
+        .collect();
+    starts.push(patch.len());
+    (0..starts.len() - 1).map(move |ix| &patch[starts[ix]..starts[ix + 1]])
+}
+
 /// Whether a failed pull means the branches diverged.
 pub fn is_diverged_error(error: &str) -> bool {
     let error = error.to_lowercase();
@@ -74,6 +103,11 @@ const DIFF_ARGS: &[&str] = &[
     "--src-prefix=a/",
     "--dst-prefix=b/",
 ];
+
+/// Patches for reading carry whole files, so the diff view can reveal any
+/// unchanged line; it folds them away until asked. Patches for staging keep
+/// git's usual three lines.
+const WHOLE_FILES: &str = "--unified=1000000";
 
 impl Repository {
     /// Opens the repository that contains `path`.
@@ -199,26 +233,40 @@ impl Repository {
     }
 
     /// One patch with every change against HEAD: staged, unstaged and
-    /// untracked, skipping `hidden` paths. Before the first commit, against
-    /// the empty tree.
-    pub fn diff_all(&self, status: &Status, hidden: &dyn Fn(&str) -> bool) -> Result<String> {
-        let tracked: Vec<&str> = status
+    /// untracked, skipping `hidden` paths. Files in `whole` carry their whole
+    /// text so unchanged lines can be revealed; the rest keep git's three
+    /// lines of context. Before the first commit, against the empty tree.
+    pub fn diff_all(
+        &self,
+        status: &Status,
+        hidden: &dyn Fn(&str) -> bool,
+        whole: &dyn Fn(&str) -> bool,
+    ) -> Result<String> {
+        let (whole_files, tracked): (Vec<&str>, Vec<&str>) = status
             .entries
             .iter()
             .filter(|entry| entry.status != FileStatus::Untracked && !hidden(&entry.path))
             .map(|entry| entry.path.as_str())
-            .collect();
-        let mut patch = String::new();
-        if !tracked.is_empty() {
-            let base = self.head_or_empty_tree();
-            patch = self.git(
+            .partition(|path| whole(path));
+        let base = self.head_or_empty_tree();
+        let diff = |paths: &[&str], context: Option<&str>| -> Result<String> {
+            if paths.is_empty() {
+                return Ok(String::new());
+            }
+            self.git(
                 ["diff", base]
-                    .iter()
-                    .chain(DIFF_ARGS)
-                    .chain(&["--"])
-                    .chain(tracked.iter()),
-            )?;
-        }
+                    .into_iter()
+                    .chain(context)
+                    .chain(DIFF_ARGS.iter().copied())
+                    .chain(["--"])
+                    .chain(paths.iter().copied()),
+            )
+        };
+        // Two runs, merged back into git's path order.
+        let mut patch = merge_by_path(
+            &diff(&tracked, None)?,
+            &diff(&whole_files, Some(WHOLE_FILES))?,
+        );
         for entry in status.untracked() {
             if hidden(&entry.path) {
                 continue;
@@ -468,10 +516,16 @@ impl Repository {
     /// What a commit changed in one file, following a rename.
     pub fn commit_file_patch(&self, oid: &str, path: &str) -> Result<String> {
         self.git(
-            ["show", "--format=", "--first-parent", "--no-show-signature"]
-                .iter()
-                .chain(DIFF_ARGS)
-                .chain(&[oid, "--", path]),
+            [
+                "show",
+                "--format=",
+                "--first-parent",
+                "--no-show-signature",
+                WHOLE_FILES,
+            ]
+            .iter()
+            .chain(DIFF_ARGS)
+            .chain(&[oid, "--", path]),
         )
     }
 
@@ -493,10 +547,16 @@ impl Repository {
     /// The patch a commit introduces; merges against their first parent.
     pub fn commit_patch(&self, oid: &str) -> Result<String> {
         self.git(
-            ["show", "--format=", "--first-parent", "--no-show-signature"]
-                .iter()
-                .chain(DIFF_ARGS)
-                .chain(&[oid, "--"]),
+            [
+                "show",
+                "--format=",
+                "--first-parent",
+                "--no-show-signature",
+                WHOLE_FILES,
+            ]
+            .iter()
+            .chain(DIFF_ARGS)
+            .chain(&[oid, "--"]),
         )
     }
 
@@ -585,10 +645,16 @@ impl Repository {
 
     pub fn stash_patch(&self, stash: &Stash) -> Result<String> {
         self.git(
-            ["stash", "show", "--patch", "--include-untracked"]
-                .iter()
-                .chain(DIFF_ARGS)
-                .chain(&[stash.reference().as_str()]),
+            [
+                "stash",
+                "show",
+                "--patch",
+                "--include-untracked",
+                WHOLE_FILES,
+            ]
+            .iter()
+            .chain(DIFF_ARGS)
+            .chain(&[stash.reference().as_str()]),
         )
     }
 

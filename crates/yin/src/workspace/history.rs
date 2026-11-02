@@ -272,6 +272,7 @@ impl Workspace {
                         });
                         this.history_patch = patch;
                         this.place_history_notes();
+                        this.research_diff(super::annotations::DiffPane::History, cx);
                         this.history_diff
                             .update(cx, |state, cx| state.set_files(files, cx));
                         this.schedule_relayout(cx);
@@ -654,26 +655,36 @@ impl Workspace {
             .read(cx)
             .selected_lines()
             .map(|_| self.render_note_hint(window, cx));
-        div()
-            .relative()
+        v_flex()
             .flex_1()
             .min_h_0()
+            .child(self.render_diff_bar(super::annotations::DiffPane::History, cx))
             .child(
-                self.annotate(
-                    Diff::new(&self.history_diff)
-                        .line_number(true)
-                        .render_header({
-                            let state = self.history_diff.clone();
-                            move |file, _, cx| {
-                                super::style::diff_file_header(file, &state, None, cx)
-                            }
-                        }),
-                    super::annotations::DiffPane::History,
-                    cx,
-                ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        self.annotate(
+                            Diff::new(&self.history_diff)
+                                .line_number(true)
+                                .render_header({
+                                    let state = self.history_diff.clone();
+                                    move |file, _, cx| {
+                                        super::style::diff_file_header(file, &state, None, cx)
+                                    }
+                                }),
+                            super::annotations::DiffPane::History,
+                            cx,
+                        ),
+                    )
+                    .children(selection_bar)
+                    .children(self.render_note_draft(
+                        super::annotations::DiffPane::History,
+                        window,
+                        cx,
+                    )),
             )
-            .children(selection_bar)
-            .children(self.render_note_draft(super::annotations::DiffPane::History, window, cx))
             .into_any_element()
     }
 

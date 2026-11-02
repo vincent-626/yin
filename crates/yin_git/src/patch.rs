@@ -56,6 +56,12 @@ pub struct FilePatch {
     hunks: Vec<Hunk>,
 }
 
+impl Row {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 impl FilePatch {
     pub fn parse(patch: &str) -> Result<Self> {
         let mut header = Vec::new();
@@ -174,6 +180,33 @@ impl FilePatch {
                     && window.windows(2).all(|pair| pair[1].0 == pair[0].0 + 1)
             })
             .map(|window| window[0].0)
+            .collect()
+    }
+
+    /// The file's name on the new side, or the old for a deletion.
+    pub fn path(&self) -> Option<&str> {
+        let name = |prefix: &str| {
+            self.header
+                .iter()
+                .find_map(|line| line.strip_prefix(prefix))
+                .filter(|path| *path != "/dev/null")
+        };
+        name("+++ b/").or_else(|| name("--- a/"))
+    }
+
+    /// Each file's patch in a multi-file patch.
+    pub fn split(patch: &str) -> Vec<Self> {
+        patch
+            .split("\ndiff --git ")
+            .enumerate()
+            .filter_map(|(ix, section)| {
+                let section = if ix == 0 {
+                    section.strip_prefix("diff --git ")?.to_owned()
+                } else {
+                    section.to_owned()
+                };
+                Self::parse(&format!("diff --git {section}")).ok()
+            })
             .collect()
     }
 

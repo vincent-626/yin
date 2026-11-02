@@ -54,7 +54,15 @@ fn commands() -> Vec<(&'static str, MakeAction)> {
         ("Markdown preview / source", || Box::new(TogglePreview)),
         ("Find in markdown preview", || Box::new(FindInPreview)),
         ("Unified / split diff", || Box::new(ToggleDiffMode)),
+        ("Find in changes", || Box::new(FindInDiff)),
+        ("Collapse or expand all files", || {
+            Box::new(ToggleCollapseAll)
+        }),
+        ("Open file at this line", || Box::new(OpenInFile)),
         ("Toggle sidebar", || Box::new(ToggleSidebar)),
+        ("Bigger text", || Box::new(crate::shell::ZoomIn)),
+        ("Smaller text", || Box::new(crate::shell::ZoomOut)),
+        ("Default text size", || Box::new(crate::shell::ResetZoom)),
         ("Refresh", || Box::new(Refresh)),
         ("Open repository", || Box::new(crate::shell::Open)),
         ("Quit", || Box::new(crate::shell::Quit)),

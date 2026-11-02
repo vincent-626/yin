@@ -54,7 +54,7 @@ enum NotePlace {
 }
 
 impl Workspace {
-    fn diff_in(&self, pane: DiffPane) -> &Entity<DiffState> {
+    pub(super) fn diff_in(&self, pane: DiffPane) -> &Entity<DiffState> {
         match pane {
             DiffPane::Changes => &self.all_diff,
             DiffPane::History => &self.history_diff,

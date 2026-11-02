@@ -37,6 +37,7 @@ pub(super) struct OpenFile {
     dirty: bool,
     /// The file changed on disk while it had unsaved edits.
     changed_on_disk: bool,
+    pub(super) marks: super::marks::FileMarks,
 }
 
 impl OpenFile {
@@ -61,6 +62,7 @@ enum FileContent {
         editor: Entity<EditorState>,
         markdown: Option<Entity<TextViewState>>,
         _edits: Subscription,
+        _selection: Subscription,
     },
     /// Binary, too large, or unreadable; the reason is shown instead.
     Unavailable(String),
@@ -281,6 +283,7 @@ impl Workspace {
             preview: is_markdown(path),
             dirty: false,
             changed_on_disk: false,
+            marks: Default::default(),
         });
         let ix = self.open_files.len() - 1;
         self.active_file = Some(ix);
@@ -392,6 +395,10 @@ impl Workspace {
                         this.file_edited(&edited_path, cx);
                     }
                 });
+                let selected_path = path.clone();
+                let selection = cx.observe(&editor, move |this, _, cx| {
+                    this.mark_selection(&selected_path, cx)
+                });
                 let baseline = editor.read(cx).value().to_string();
                 *content = FileContent::Text {
                     text,
@@ -399,12 +406,14 @@ impl Workspace {
                     editor,
                     markdown,
                     _edits: edits,
+                    _selection: selection,
                 };
             }
         }
         if let Some(editor) = created {
             self.attach_language_server(&path, language_for(&path), &editor, window, cx);
         }
+        self.mark_search_matches(ix, cx);
     }
 
     /// Paths of open files with unsaved edits.
@@ -600,7 +609,11 @@ impl Workspace {
             // A line target means reading source, even in markdown.
             file.preview = false;
             let editor = editor.clone();
+            // Land the line mid-window, where the eye finds it: the editor's
+            // margin around the cursor is capped at half the view, so a huge
+            // one centres it. Normal margins return once it has scrolled.
             editor.update(cx, |editor, cx| {
+                editor.set_cursor_surrounding_lines(Some(10_000), window, cx);
                 editor.set_cursor_position(
                     Position::new(line.saturating_sub(1), column.saturating_sub(1)),
                     window,
@@ -608,6 +621,18 @@ impl Workspace {
                 );
             });
             editor.read(cx).focus_handle(cx).focus(window, cx);
+            let centred = editor.downgrade();
+            cx.spawn_in(window, async move |_, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                centred
+                    .update_in(cx, |editor, window, cx| {
+                        editor.set_cursor_surrounding_lines(None, window, cx)
+                    })
+                    .ok();
+            })
+            .detach();
         }
     }
 

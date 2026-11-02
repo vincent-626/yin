@@ -14,6 +14,17 @@ next version.
 - Git's merge message leaves the commit box once the merge is committed or
   aborted, even outside yin.
 - Buttons and tabs show a pointing-hand cursor.
+- `cmd-=` / `cmd--` / `cmd-0` make all text bigger, smaller or the default,
+  in every window, and are remembered.
+- Opening a search result centres its line and highlights the search's
+  matches in the file. Selecting text in a file highlights its other
+  occurrences.
+- A bar above each diff: file and line counts, find in the changes (`cmd-f`),
+  and collapse or expand every file. Each file in the changes diff can show
+  its whole text, with unchanged stretches folded and expandable; commit and
+  branch diffs always can.
+- `alt-space` (or `alt-enter`) opens the file at the diff's selected line, or
+  the selected file at its first change.
 
 ## 0.4.2 — 2026-10-31
 

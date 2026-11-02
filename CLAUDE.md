@@ -27,7 +27,10 @@ extensions, settings UI, collaboration, AI chat, being a general editor.
 
 `ref/` holds shallow clones, gitignored. Create them with `script/bootstrap-refs`.
 
-- `ref/gpui-component` — the exact UI library we use (gpui-kit 0.8.1). Its
+- `ref/gpui-component` — the UI library we use, at its latest commit, which
+  is ahead of the gpui-kit 0.8.1 we build against: an API seen there may not
+  exist yet (the diff's line decorations don't). Check
+  `~/.cargo/registry/src/*/gpui-component-0.8.1` before relying on one. Its
   `examples/` are the best API docs: `tig` (git history + Diff), `editor`,
   `markdown`, `dock`, `sidebar`. Component sources live in
   `crates/component/src/`.
