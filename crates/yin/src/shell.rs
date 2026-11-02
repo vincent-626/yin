@@ -241,6 +241,7 @@ impl Shell {
                 })
                 .child(
                     Button::new("open")
+                        .cursor_pointer()
                         .primary()
                         .label("Open Repository…")
                         .on_click(

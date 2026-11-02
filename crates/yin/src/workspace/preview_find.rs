@@ -173,6 +173,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("preview-find-previous")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .icon(IconName::ArrowUp)
@@ -181,6 +182,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("preview-find-next")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .icon(IconName::ArrowDown)
@@ -190,6 +192,7 @@ impl Workspace {
                 .child(div().flex_1())
                 .child(
                     Button::new("preview-find-close")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .icon(IconName::Close)

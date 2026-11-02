@@ -368,6 +368,7 @@ impl Workspace {
                 )
                 .child(
                     Button::new("all-commits")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .label("All commits")
@@ -426,6 +427,7 @@ impl Workspace {
                 )))
                 .child(
                     Button::new("stop-comparing")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .label("All commits")
@@ -477,6 +479,7 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(
                 Button::new("stack-trunk")
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .label(trunk)
@@ -490,6 +493,7 @@ impl Workspace {
             let (base, head) = (layer.base.clone(), head.to_owned());
             row = row.child(separator()).child(
                 Button::new(("stack-layer", ix))
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .selected(active)
@@ -628,6 +632,7 @@ impl Workspace {
                                 let expanded = self.commit_body_expanded;
                                 this.child(div().flex_1()).child(
                                     Button::new("toggle-body")
+                                        .cursor_pointer()
                                         .ghost()
                                         .xsmall()
                                         .label(if expanded { "Show less" } else { "Show more" })

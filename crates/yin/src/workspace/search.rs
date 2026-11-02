@@ -274,6 +274,7 @@ impl Workspace {
                             .child(Input::new(&self.search_input).small().flex_1())
                             .child(
                                 Button::new("search-case")
+                                    .cursor_pointer()
                                     .xsmall()
                                     .ghost()
                                     .label("Aa")
@@ -285,6 +286,7 @@ impl Workspace {
                             )
                             .child(
                                 Button::new("search-regex")
+                                    .cursor_pointer()
                                     .xsmall()
                                     .ghost()
                                     .label(".*")

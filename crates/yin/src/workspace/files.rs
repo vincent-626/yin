@@ -54,6 +54,10 @@ enum FileContent {
     Text {
         /// What was last read from or written to disk.
         text: String,
+        /// The editor's text right after loading or saving `text`. Unsaved
+        /// edits are measured against it, not `text`: the editor normalizes
+        /// some text (line endings), which isn't an edit.
+        baseline: String,
         editor: Entity<EditorState>,
         markdown: Option<Entity<TextViewState>>,
         _edits: Subscription,
@@ -333,6 +337,7 @@ impl Workspace {
         match &mut file.content {
             FileContent::Text {
                 text: current,
+                baseline,
                 editor,
                 markdown,
                 ..
@@ -340,15 +345,33 @@ impl Workspace {
                 if *current == text {
                     return;
                 }
-                // Never overwrite unsaved edits; offer a reload instead.
+                // Never overwrite unsaved edits; saving asks first instead.
                 if file.dirty {
                     file.changed_on_disk = true;
                     return;
                 }
-                editor.update(cx, |editor, cx| editor.set_value(text.clone(), window, cx));
+                // Keep the reader where they were: replacing the text alone
+                // would jump to the top.
+                editor.update(cx, |editor, cx| {
+                    let scroll = editor.scroll_offset();
+                    let selection = editor.selected_range();
+                    editor.set_value(text.clone(), window, cx);
+                    let value = editor.value();
+                    let clamp = |offset: usize| {
+                        let mut offset = offset.min(value.len());
+                        while !value.is_char_boundary(offset) {
+                            offset -= 1;
+                        }
+                        offset
+                    };
+                    let selection = clamp(selection.start)..clamp(selection.end);
+                    editor.set_selected_range(selection, cx);
+                    editor.set_scroll_offset(scroll, cx);
+                });
                 if let Some(markdown) = markdown {
                     markdown.update(cx, |markdown, cx| markdown.set_text(&text, cx));
                 }
+                *baseline = editor.read(cx).value().to_string();
                 *current = text;
             }
             content => {
@@ -369,8 +392,10 @@ impl Workspace {
                         this.file_edited(&edited_path, cx);
                     }
                 });
+                let baseline = editor.read(cx).value().to_string();
                 *content = FileContent::Text {
                     text,
+                    baseline,
                     editor,
                     markdown,
                     _edits: edits,
@@ -396,14 +421,14 @@ impl Workspace {
             return;
         };
         if let FileContent::Text {
-            text,
+            baseline,
             editor,
             markdown,
             ..
         } = &file.content
         {
             let value = editor.read(cx).value();
-            file.dirty = value.as_ref() != text.as_str();
+            file.dirty = value.as_ref() != baseline.as_str();
             if let Some(markdown) = markdown {
                 markdown.update(cx, |markdown, cx| markdown.set_text(&value, cx));
             }
@@ -413,7 +438,41 @@ impl Workspace {
     }
 
     pub(super) fn save_active_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(file) = self.active_file.and_then(|ix| self.open_files.get(ix)) else {
+        let Some(ix) = self.active_file.filter(|ix| *ix < self.open_files.len()) else {
+            return;
+        };
+        let file = &self.open_files[ix];
+        if !file.changed_on_disk {
+            return self.write_file(ix, window, cx);
+        }
+        // Someone else changed the file while it had unsaved edits here.
+        let name = file
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&file.path)
+            .to_owned();
+        let this = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let this = this.clone();
+            alert
+                .title(format!("{name} changed on disk"))
+                .description(
+                    "It changed after you started editing. Saving replaces that version with yours.",
+                )
+                .confirm()
+                .ok_text("Overwrite")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    this.update(cx, |this, cx| this.write_file(ix, window, cx))
+                        .ok();
+                    true
+                })
+        });
+    }
+
+    fn write_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.open_files.get(ix) else {
             return;
         };
         let FileContent::Text { editor, .. } = &file.content else {
@@ -434,11 +493,17 @@ impl Workspace {
                     Ok(()) => {
                         this.notify_saved(&path);
                         if let Some(file) = this.open_files.iter_mut().find(|f| f.path == path)
-                            && let FileContent::Text { text, editor, .. } = &mut file.content
+                            && let FileContent::Text {
+                                text,
+                                baseline,
+                                editor,
+                                ..
+                            } = &mut file.content
                         {
                             file.dirty = editor.read(cx).value().as_ref() != value;
                             file.changed_on_disk = false;
-                            *text = value;
+                            *text = value.clone();
+                            *baseline = value;
                         }
                     }
                     Err(error) => window.push_notification(
@@ -451,21 +516,6 @@ impl Workspace {
             .ok();
         })
         .detach();
-    }
-
-    /// Replaces unsaved edits with the file as it is on disk.
-    fn reload_from_disk(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(file) = self.open_files.get_mut(ix) else {
-            return;
-        };
-        file.dirty = false;
-        file.changed_on_disk = false;
-        if let FileContent::Text { text, .. } = &mut file.content {
-            // Forget the saved text so the next read always applies.
-            text.clear();
-        }
-        let path = file.path.clone();
-        self.load_file(path, None, window, cx);
     }
 
     /// Picks up changes on disk to open files, such as an agent's edits.
@@ -830,8 +880,9 @@ impl Workspace {
                                 } else {
                                     name.to_owned()
                                 };
-                                Tab::new().label(label).suffix(
+                                Tab::new().cursor_pointer().label(label).suffix(
                                     Button::new(("close-file", ix))
+                                        .cursor_pointer()
                                         .ghost()
                                         .xsmall()
                                         .icon(IconName::Close)
@@ -845,6 +896,7 @@ impl Workspace {
                     .when(markdown, |this| {
                         this.child(
                             Button::new("toggle-preview")
+                                .cursor_pointer()
                                 .ghost()
                                 .xsmall()
                                 .mr_2()
@@ -865,31 +917,6 @@ impl Workspace {
                     .border_color(cx.theme().border)
                     .child(file.path.clone()),
             )
-            .when(file.changed_on_disk, |this| {
-                this.child(
-                    h_flex()
-                        .flex_none()
-                        .px_3()
-                        .py_1p5()
-                        .gap_2()
-                        .text_xs()
-                        .bg(cx.theme().warning.opacity(0.15))
-                        .child(
-                            div().flex_1().child(
-                                "Changed on disk while you were editing. Saving overwrites it.",
-                            ),
-                        )
-                        .child(
-                            Button::new("reload-file")
-                                .xsmall()
-                                .ghost()
-                                .label("Reload")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.reload_from_disk(active, window, cx)
-                                })),
-                        ),
-                )
-            })
             .children(self.render_preview_find(cx))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()

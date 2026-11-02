@@ -8,7 +8,7 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenu},
 };
 use gpui_kit::{
-    Anchor, Context, IntoElement, ParentElement as _, Styled as _, Window,
+    Anchor, Context, IntoElement, ParentElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
 
@@ -38,12 +38,18 @@ impl Workspace {
             .min_w_0()
             .gap_1()
             .child(
-                h_flex().flex_1().min_w_0().child(
+                // A long branch name shrinks and truncates rather than
+                // pushing the buttons beside it.
+                h_flex().flex_1().min_w_0().overflow_hidden().child(
                     Button::new("git-bar-branch")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .max_w_full()
                         .icon(Icon::empty().path("icons/git-branch.svg"))
-                        .label(self.head_label())
+                        .child(div().min_w_0().truncate().child(self.head_label()))
                         .text_color(cx.theme().muted_foreground)
                         .tooltip_with_action("Switch branch", &SwitchBranch, Some(CHANGES_CONTEXT))
                         .on_click(
@@ -52,9 +58,10 @@ impl Workspace {
                 ),
             )
             .children(self.render_pr_button(cx))
-            .child(self.render_sync_buttons(cx))
+            .child(div().flex_none().child(self.render_sync_buttons(cx)))
             .child(
                 Button::new("git-bar-more")
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .icon(IconName::Ellipsis)

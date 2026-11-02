@@ -252,6 +252,11 @@ pub struct Workspace {
     in_progress: Option<yin_git::InProgress>,
     /// Git's prepared merge message, waiting to fill an empty commit box.
     merge_message: Option<String>,
+    /// The merge message the commit box was filled with; cleared from the
+    /// box once the merge is over, unless it was edited.
+    prefilled_message: Option<String>,
+    /// The merge ended (committed or aborted, here or elsewhere).
+    merge_ended: bool,
     reviews: crate::review::Reviews,
     review_hashes: std::collections::HashMap<String, u64>,
     reviewed: Arc<std::collections::HashSet<String>>,
@@ -412,6 +417,8 @@ impl Workspace {
             stashes: Vec::new(),
             in_progress: None,
             merge_message: None,
+            prefilled_message: None,
+            merge_ended: false,
             reviews,
             review_hashes: Default::default(),
             reviewed: Arc::default(),
@@ -692,6 +699,9 @@ impl Workspace {
                         // Offer the message once per merge, not after every refresh.
                         if in_progress != this.in_progress {
                             this.merge_message = merge_message;
+                            this.merge_ended |= this.in_progress
+                                == Some(yin_git::InProgress::Merge)
+                                && in_progress.is_none();
                         }
                         this.in_progress = in_progress;
                         this.install_review_hashes(hashes);
@@ -1093,11 +1103,13 @@ impl Workspace {
                     }))
                     .child(
                         Tab::new()
+                            .cursor_pointer()
                             .prefix(tab_icon(Icon::empty().path("icons/folder.svg"), cx))
                             .label("Files"),
                     )
                     .child(
                         Tab::new()
+                            .cursor_pointer()
                             .prefix(tab_icon(Icon::empty().path("icons/file-diff.svg"), cx))
                             .label("Changes")
                             .when(!self.status.entries.is_empty(), |tab| {
@@ -1111,11 +1123,13 @@ impl Workspace {
                     )
                     .child(
                         Tab::new()
+                            .cursor_pointer()
                             .prefix(tab_icon(Icon::empty().path("icons/git-graph.svg"), cx))
                             .label("History"),
                     )
                     .child(
                         Tab::new()
+                            .cursor_pointer()
                             .prefix(tab_icon(
                                 Icon::new(gpui_kit::component::IconName::Search),
                                 cx,
@@ -1141,6 +1155,7 @@ impl Workspace {
                 .child(div().font_medium().child(self.repo.name()))
                 .child(
                     Button::new("branch")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .icon(Icon::empty().path("icons/git-branch.svg"))
@@ -1291,6 +1306,7 @@ impl Workspace {
                     .child(div().flex_1())
                     .child(
                         Button::new("commit")
+                            .cursor_pointer()
                             .primary()
                             .small()
                             .label(if self.amend { "Amend" } else { "Commit" })
@@ -1423,6 +1439,7 @@ fn render_row(
                     |this| {
                         this.child(
                             Button::new(("toggle-section", ix))
+                                .cursor_pointer()
                                 .ghost()
                                 .xsmall()
                                 .label(if section.is_staged() {
@@ -1526,8 +1543,18 @@ impl Render for Workspace {
         if let Some(message) = self.merge_message.take()
             && self.commit_message.read(cx).value().trim().is_empty()
         {
+            self.prefilled_message = Some(message.clone());
             self.commit_message
                 .update(cx, |state, cx| state.set_value(message, window, cx));
+        }
+        // An agent may commit the merge outside yin; git's message would
+        // otherwise linger in the box.
+        if std::mem::take(&mut self.merge_ended)
+            && let Some(prefilled) = self.prefilled_message.take()
+            && self.commit_message.read(cx).value().trim() == prefilled.trim()
+        {
+            self.commit_message
+                .update(cx, |state, cx| state.set_value("", window, cx));
         }
         let rem = window.rem_size();
         // The panes keep the sizes of the panels they last had; when the

@@ -5,6 +5,16 @@ next version.
 
 ## Unreleased
 
+- Fixed: gopls (and any server without a `--version` flag) was reported as
+  not installed. Language servers now also get your shell's full PATH.
+- Open files reload when they change on disk and keep your place; a file only
+  counts as edited when you change it. Saving over a file that changed on disk
+  asks first, instead of the old Reload banner.
+- A long branch name truncates instead of pushing the git bar's buttons.
+- Git's merge message leaves the commit box once the merge is committed or
+  aborted, even outside yin.
+- Buttons and tabs show a pointing-hand cursor.
+
 ## 0.4.2 — 2026-10-31
 
 - Review notes follow their code as an agent edits: a note moves with its

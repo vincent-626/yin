@@ -356,6 +356,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("cancel-note")
+                                .cursor_pointer()
                                 .ghost()
                                 .small()
                                 .label("Cancel")
@@ -365,6 +366,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("save-note")
+                                .cursor_pointer()
                                 .primary()
                                 .small()
                                 .label("Add note")
@@ -421,6 +423,7 @@ impl Workspace {
                 .child(div().flex_1().min_w_0().truncate().child(parts.join(" · ")))
                 .child(
                     Button::new("copy-prompt")
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .label("Copy as prompt")
@@ -436,6 +439,7 @@ impl Workspace {
                 .when(!self.notes.is_empty(), |this| {
                     this.child(
                         Button::new("clear-notes")
+                            .cursor_pointer()
                             .ghost()
                             .xsmall()
                             .icon(Icon::empty().path("icons/trash.svg"))
@@ -497,6 +501,7 @@ fn render_note(
                 .child(div().flex_1())
                 .child(
                     Button::new(ElementId::from(format!("delete-note-{id}")))
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .icon(IconName::Close)
@@ -552,6 +557,7 @@ fn render_thread(thread: &ReviewThread, cx: &mut gpui_kit::App) -> AnyElement {
                 .when_some(url, |this, url| {
                     this.child(
                         Button::new(ElementId::from(format!("open-thread-{url}")))
+                            .cursor_pointer()
                             .ghost()
                             .xsmall()
                             .icon(Icon::empty().path("icons/external-link.svg"))

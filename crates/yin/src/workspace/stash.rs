@@ -120,6 +120,7 @@ pub(super) fn render_stash_row(
                 )
                 .child(
                     Button::new(("pop-stash", ix))
+                        .cursor_pointer()
                         .ghost()
                         .xsmall()
                         .label("Pop")

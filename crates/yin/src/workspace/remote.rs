@@ -160,6 +160,7 @@ impl Workspace {
             .gap_1()
             .child(
                 Button::new("fetch")
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .icon(IconName::RefreshCw)
@@ -172,6 +173,7 @@ impl Workspace {
             )
             .child(
                 Button::new("pull")
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .icon(IconName::ArrowDown)
@@ -185,6 +187,7 @@ impl Workspace {
             )
             .child(
                 Button::new("push")
+                    .cursor_pointer()
                     .ghost()
                     .xsmall()
                     .icon(IconName::ArrowUp)

@@ -82,6 +82,11 @@ pub fn find_working_executable(name: &str, root: &Path) -> Option<PathBuf> {
             candidates.extend(found.into_iter().rev());
         }
     }
+    // Only rustup's proxies need running to tell whether they work; other
+    // servers don't share a version flag (`gopls --version` is an error).
+    if name != "rust-analyzer" {
+        return candidates.into_iter().next();
+    }
     candidates.into_iter().find(|candidate| {
         std::process::Command::new(candidate)
             .arg("--version")
@@ -94,14 +99,37 @@ pub fn find_working_executable(name: &str, root: &Path) -> Option<PathBuf> {
     })
 }
 
-pub fn find_executable(name: &str) -> Option<PathBuf> {
+/// PATH for language servers: the app's own, the usual tool folders, then
+/// the login shell's. gopls runs `go`, which a Finder-launched app can't see.
+pub fn server_path() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let fallbacks = [
+    let env_path = std::env::var("PATH").unwrap_or_default();
+    let mut dirs: Vec<String> = Vec::new();
+    for dir in env_path
+        .split(':')
+        .map(str::to_owned)
+        .chain(fallback_dirs(&home))
+        .chain(login_path().split(':').map(str::to_owned))
+    {
+        if !dir.is_empty() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs.join(":")
+}
+
+fn fallback_dirs(home: &str) -> [String; 4] {
+    [
         format!("{home}/.cargo/bin"),
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         format!("{home}/go/bin"),
-    ];
+    ]
+}
+
+pub fn find_executable(name: &str) -> Option<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let fallbacks = fallback_dirs(&home);
     let env_path = std::env::var("PATH").unwrap_or_default();
     env_path
         .split(':')

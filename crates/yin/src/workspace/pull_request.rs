@@ -345,6 +345,7 @@ impl Workspace {
         }
         Some(
             Button::new("git-bar-pr")
+                .cursor_pointer()
                 .ghost()
                 .xsmall()
                 .icon(Icon::empty().path("icons/git-pull-request.svg"))

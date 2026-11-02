@@ -81,6 +81,7 @@ impl LanguageServer {
         let mut child = Command::new(command)
             .args(args)
             .current_dir(root)
+            .env("PATH", paths::server_path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

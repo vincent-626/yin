@@ -93,6 +93,7 @@ impl Workspace {
                 .child(div().flex_1().child(summary))
                 .child(
                     Button::new("mark-resolved")
+                        .cursor_pointer()
                         .xsmall()
                         .primary()
                         .label("Mark resolved")
@@ -125,6 +126,7 @@ impl Workspace {
                 .when(rebasing, |this| {
                     this.child(
                         Button::new("continue-rebase")
+                            .cursor_pointer()
                             .xsmall()
                             .primary()
                             .label("Continue")
@@ -136,6 +138,7 @@ impl Workspace {
                 })
                 .child(
                     Button::new("abort-operation")
+                        .cursor_pointer()
                         .xsmall()
                         .ghost()
                         .label("Abort")
