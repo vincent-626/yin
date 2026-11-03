@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+## 0.5.0 — 2026-11-03
+
 - Fixed: gopls (and any server without a `--version` flag) was reported as
   not installed. Language servers now also get your shell's full PATH.
 - Open files reload when they change on disk and keep your place; a file only
