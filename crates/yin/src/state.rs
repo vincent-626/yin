@@ -23,6 +23,8 @@ pub struct Session {
     pub split_diff: bool,
     /// Sidebar width in points.
     pub sidebar_width: Option<f32>,
+    /// Commit box height in points.
+    pub commit_height: Option<f32>,
 }
 
 /// The window's last position and size, in points.

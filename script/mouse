@@ -3,6 +3,7 @@
 # from its top-left:
 #   script/mouse <x> <y>                 move
 #   script/mouse <x> <y> click           click
+#   script/mouse <x> <y> double          double-click
 #   script/mouse <x> <y> drag <x2> <y2>  drag from one point to another
 set -euo pipefail
 pid=$(pgrep -nx yin) || { echo "yin is not running" >&2; exit 1; }
@@ -16,13 +17,19 @@ let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
 guard let w = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }) else { exit(1) }
 let b = w[kCGWindowBounds as String] as! [String: Double]
 func at(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: b["X"]! + x, y: b["Y"]! + y) }
-func post(_ type: CGEventType, _ point: CGPoint) {
-    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+func post(_ type: CGEventType, _ point: CGPoint, clicks: Int64 = 1) {
+    let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+    event?.setIntegerValueField(.mouseEventClickState, value: clicks)
+    event?.post(tap: .cghidEventTap)
 }
 post(.mouseMoved, at(x, y))
 switch mode {
 case "click":
     usleep(50_000); post(.leftMouseDown, at(x, y)); post(.leftMouseUp, at(x, y))
+case "double":
+    for clicks in Int64(1)...2 {
+        usleep(50_000); post(.leftMouseDown, at(x, y), clicks: clicks); post(.leftMouseUp, at(x, y), clicks: clicks)
+    }
 case "drag":
     usleep(50_000); post(.leftMouseDown, at(x, y))
     for step in 1...20 {

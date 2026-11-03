@@ -18,12 +18,33 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, Focusable as _, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, ScrollStrategy, SharedString, Styled as _, Subscription,
-    Window, div, prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
 use yin_git::{Change, FileStatus};
 
 use super::{FILES_CONTEXT, Workspace};
+
+/// A tab being dragged to a new place; it draws itself under the pointer.
+#[derive(Clone)]
+struct DraggedTab {
+    ix: usize,
+    label: SharedString,
+}
+
+impl gpui_kit::Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_sm()
+            .child(self.label.clone())
+    }
+}
 
 /// Larger files are not opened; reading code doesn't need them.
 const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
@@ -636,6 +657,19 @@ impl Workspace {
         }
     }
 
+    /// Moves tab `from` to where tab `to` is, keeping the same tab active.
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.open_files.len() || to >= self.open_files.len() {
+            return;
+        }
+        let active = self.active_file.map(|ix| self.open_files[ix].path.clone());
+        let file = self.open_files.remove(from);
+        self.open_files.insert(to, file);
+        self.active_file =
+            active.and_then(|path| self.open_files.iter().position(|f| f.path == path));
+        cx.notify();
+    }
+
     /// Closes a tab, asking first when it has unsaved edits.
     pub(super) fn close_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(file) = self.open_files.get(ix) else {
@@ -905,17 +939,31 @@ impl Workspace {
                                 } else {
                                     name.to_owned()
                                 };
-                                Tab::new().cursor_pointer().label(label).suffix(
-                                    Button::new(("close-file", ix))
-                                        .cursor_pointer()
-                                        .ghost()
-                                        .xsmall()
-                                        .icon(IconName::Close)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.close_file(ix, window, cx);
-                                        })),
-                                )
+                                let dragged = DraggedTab {
+                                    ix,
+                                    label: label.clone().into(),
+                                };
+                                Tab::new()
+                                    .cursor_pointer()
+                                    .label(label)
+                                    .on_drag(dragged, |tab, _, _, cx| cx.new(|_| tab.clone()))
+                                    .drag_over::<DraggedTab>(|style, _, _, cx| {
+                                        style.bg(cx.theme().drop_target)
+                                    })
+                                    .on_drop(cx.listener(move |this, tab: &DraggedTab, _, cx| {
+                                        this.move_tab(tab.ix, ix, cx)
+                                    }))
+                                    .suffix(
+                                        Button::new(("close-file", ix))
+                                            .cursor_pointer()
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::Close)
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.close_file(ix, window, cx);
+                                            })),
+                                    )
                             })),
                     )
                     .when(markdown, |this| {

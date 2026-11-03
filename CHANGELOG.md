@@ -23,6 +23,9 @@ next version.
   and collapse or expand every file. Each file in the changes diff can show
   its whole text, with unchanged stretches folded and expandable; commit and
   branch diffs always can.
+- Drag tabs to reorder them.
+- Drag the commit box's top edge to make it taller or shorter; its height is
+  remembered per repository.
 - `alt-space` (or `alt-enter`) opens the file at the diff's selected line, or
   the selected file at its first change.
 

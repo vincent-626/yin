@@ -12,7 +12,7 @@ use gpui_kit::component::{
     input::{InputEvent, Textarea, TextareaState},
     list::ListItem,
     notification::Notification,
-    resizable::{h_resizable, resizable_panel},
+    resizable::{h_resizable, resizable_panel, v_resizable},
     scroll::Scrollbar,
     tab::{Tab, TabBar},
     v_flex,
@@ -120,6 +120,9 @@ pub(crate) mod actions {
 use actions::*;
 
 const CHANGES_CONTEXT: &str = "Changes";
+/// The commit box's height until it's dragged, and the least it can be.
+const COMMIT_HEIGHT: f32 = 190.;
+const MIN_COMMIT_HEIGHT: f32 = 150.;
 const HISTORY_CONTEXT: &str = "History";
 const FILES_CONTEXT: &str = "Files";
 const SEARCH_CONTEXT: &str = "SearchResults";
@@ -360,6 +363,10 @@ pub struct Workspace {
     sidebar_width: Option<f32>,
     /// Whether the panes were last laid out with the sidebar.
     panes_had_sidebar: bool,
+    /// The changes list over the commit box.
+    commit_panes: Entity<gpui_kit::component::resizable::ResizableState>,
+    /// The commit box's height in points, once dragged or restored.
+    commit_height: Option<f32>,
     _files_task: Task<()>,
     finder: Entity<CommandState>,
     finder_results: Vec<String>,
@@ -401,6 +408,16 @@ impl Workspace {
             },
         )
         .detach();
+        let commit_panes = cx.new(|_| gpui_kit::component::resizable::ResizableState::default());
+        cx.subscribe(
+            &commit_panes,
+            |this, panes, _: &gpui_kit::component::resizable::ResizablePanelEvent, cx| {
+                if let [_, height] = panes.read(cx).sizes().as_slice() {
+                    this.commit_height = Some((*height).into());
+                }
+            },
+        )
+        .detach();
         let all_diff = cx.new(|cx| DiffState::new([], cx));
         cx.observe(&all_diff, |_, _, cx| cx.notify()).detach();
         let history_diff = cx.new(|cx| DiffState::new([], cx));
@@ -409,11 +426,8 @@ impl Workspace {
             .detach();
         let changes_focus = cx.focus_handle().tab_stop(true);
         changes_focus.focus(window, cx);
-        let commit_message = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .placeholder("Commit message")
-                .auto_grow(3, 12)
-        });
+        let commit_message =
+            cx.new(|cx| TextareaState::new(window, cx).placeholder("Commit message"));
         cx.subscribe_in(
             &commit_message,
             window,
@@ -506,6 +520,8 @@ impl Workspace {
             panes,
             sidebar_width: None,
             panes_had_sidebar: true,
+            commit_panes,
+            commit_height: None,
             _files_task: Task::ready(()),
             finder: cx.new(|cx| CommandState::new(window, cx)),
             finder_results: Vec::new(),
@@ -653,6 +669,7 @@ impl Workspace {
             sidebar_hidden: !self.sidebar_visible,
             split_diff: self.diff_mode == DiffMode::Split,
             sidebar_width: self.sidebar_width,
+            commit_height: self.commit_height,
         };
         crate::state::save_session(self.repo.workdir(), &session);
     }
@@ -677,6 +694,9 @@ impl Workspace {
             }
         }
         self.sidebar_width = session.sidebar_width.filter(|width| *width >= 150.);
+        self.commit_height = session
+            .commit_height
+            .filter(|height| *height >= MIN_COMMIT_HEIGHT);
         let panel = Panel::from_name(&session.panel).unwrap_or(Panel::Changes);
         self.show_panel(panel, window, cx);
         self.sidebar_visible = !session.sidebar_hidden;
@@ -1254,47 +1274,72 @@ impl Workspace {
                 )
             })
             .child(
-                div()
-                    .id("changes")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .track_focus(&self.changes_focus)
-                    .key_context(CHANGES_CONTEXT)
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|this, _, window, cx| this.changes_focus.focus(window, cx)),
-                    )
-                    .when(self.loaded && rows.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .p_4()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(if hidden > 0 {
-                                    "Everything is reviewed"
-                                } else {
-                                    "Working tree clean"
-                                }),
-                        )
-                    })
-                    .child(
-                        uniform_list("change-rows", rows.len(), move |range, _, cx| {
-                            range
-                                .map(|ix| {
-                                    render_row(
-                                        ix, &rows[ix], selected, focused, &reviewed, &owner, cx,
+                // The commit box's top edge drags to make it taller or shorter.
+                div().flex_1().min_h_0().child(
+                    v_resizable("changes-split")
+                        .with_state(&self.commit_panes)
+                        .child(
+                            resizable_panel().child(
+                                v_flex()
+                                    .size_full()
+                                    .child(
+                                        div()
+                                            .id("changes")
+                                            .relative()
+                                            .flex_1()
+                                            .min_h_0()
+                                            .track_focus(&self.changes_focus)
+                                            .key_context(CHANGES_CONTEXT)
+                                            .on_mouse_down(
+                                                gpui_kit::MouseButton::Left,
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.changes_focus.focus(window, cx)
+                                                }),
+                                            )
+                                            .when(self.loaded && rows.is_empty(), |this| {
+                                                this.child(
+                                                    div()
+                                                        .p_4()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(if hidden > 0 {
+                                                            "Everything is reviewed"
+                                                        } else {
+                                                            "Working tree clean"
+                                                        }),
+                                                )
+                                            })
+                                            .child(
+                                                uniform_list(
+                                                    "change-rows",
+                                                    rows.len(),
+                                                    move |range, _, cx| {
+                                                        range
+                                                            .map(|ix| {
+                                                                render_row(
+                                                                    ix, &rows[ix], selected,
+                                                                    focused, &reviewed, &owner, cx,
+                                                                )
+                                                            })
+                                                            .collect()
+                                                    },
+                                                )
+                                                .size_full()
+                                                .track_scroll(&self.changes_scroll),
+                                            )
+                                            .child(Scrollbar::vertical(&self.changes_scroll)),
                                     )
-                                })
-                                .collect()
-                        })
-                        .size_full()
-                        .track_scroll(&self.changes_scroll),
-                    )
-                    .child(Scrollbar::vertical(&self.changes_scroll)),
+                                    .children(self.render_notes_strip(cx)),
+                            ),
+                        )
+                        .child(
+                            resizable_panel()
+                                .size(gpui_kit::px(self.commit_height.unwrap_or(COMMIT_HEIGHT)))
+                                .size_range(gpui_kit::px(MIN_COMMIT_HEIGHT)..gpui_kit::px(1200.))
+                                .child(self.render_commit_box(window, cx)),
+                        ),
+                ),
             )
-            .children(self.render_notes_strip(cx))
-            .child(self.render_commit_box(window, cx))
     }
 
     fn render_commit_box(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1302,13 +1347,18 @@ impl Workspace {
         let can_commit =
             !self.busy && has_message && (self.amend || self.status.staged().next().is_some());
         v_flex()
-            .flex_none()
+            .size_full()
             .p_2()
             .gap_2()
             .border_t_1()
             .border_color(cx.theme().border)
             .child(self.render_git_bar(window, cx))
-            .child(Textarea::new(&self.commit_message).small())
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(Textarea::new(&self.commit_message).small().h_full()),
+            )
             .child(
                 h_flex()
                     .gap_2()
