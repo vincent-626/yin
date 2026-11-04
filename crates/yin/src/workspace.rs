@@ -326,6 +326,8 @@ pub struct Workspace {
     review_threads: Vec<yin_git::ReviewThread>,
     pr_check: Option<pull_request::PrCheck>,
     preview_find: Option<preview_find::PreviewFind>,
+    /// A double-click drag in this file is selecting whole words.
+    word_drag: Option<String>,
     diff_find: Option<diff_bar::DiffFind>,
     /// Files the changes diff shows whole, not just around their changes.
     whole_files: Arc<std::collections::HashSet<String>>,
@@ -493,6 +495,7 @@ impl Workspace {
             review_threads: Vec::new(),
             pr_check: None,
             preview_find: None,
+            word_drag: None,
             diff_find: None,
             whole_files: Arc::default(),
             _pr_task: Task::ready(()),

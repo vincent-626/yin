@@ -78,7 +78,19 @@ impl Workspace {
             return;
         };
         let editor = editor.clone();
-        let selected = editor.read(cx).selected_range();
+        let mut selected = editor.read(cx).selected_range();
+        if self.word_drag.as_deref() == Some(path) && !selected.is_empty() {
+            let snapped = {
+                let text = editor.read(cx).value();
+                word_start(&text, selected.start)..word_end(&text, selected.end)
+            };
+            if snapped != selected {
+                editor.update(cx, |editor, cx| {
+                    editor.set_selected_range(snapped.clone(), cx)
+                });
+                selected = snapped;
+            }
+        }
         if self.open_files[ix].marks.selected == selected {
             return;
         }
@@ -127,6 +139,34 @@ fn set_marks(
     }
 }
 
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The start of the word `offset` is in or just after, else `offset`.
+fn word_start(text: &str, offset: usize) -> usize {
+    let mut start = offset;
+    for (ix, c) in text[..offset].char_indices().rev() {
+        if !is_word(c) {
+            break;
+        }
+        start = ix;
+    }
+    start
+}
+
+/// The end of the word `offset` is in or just before, else `offset`.
+fn word_end(text: &str, offset: usize) -> usize {
+    let mut end = offset;
+    for (ix, c) in text[offset..].char_indices() {
+        if !is_word(c) {
+            break;
+        }
+        end = offset + ix + c.len_utf8();
+    }
+    end
+}
+
 /// Byte offset of each line's start.
 fn line_starts(text: &str) -> Vec<usize> {
     std::iter::once(0)
@@ -160,5 +200,17 @@ mod tests {
         assert!(!worth_marking("  "));
         assert!(!worth_marking("a\nb"));
         assert_eq!(line_starts(text), [0, 11, 17]);
+    }
+
+    #[test]
+    fn snaps_to_whole_words() {
+        let text = "let user_name = greeting;";
+        // From inside `user_name` to inside `greeting`.
+        assert_eq!(word_start(text, 6), 4);
+        assert_eq!(word_end(text, 19), 24);
+        // Already on a boundary, or on punctuation: unchanged.
+        assert_eq!(word_start(text, 4), 4);
+        assert_eq!(word_end(text, 13), 13);
+        assert_eq!(word_end(text, 25), 25);
     }
 }

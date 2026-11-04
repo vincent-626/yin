@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+- Double-click and drag in a file selects whole words, as in the diff.
+
 ## 0.5.0 — 2026-11-03
 
 - Fixed: gopls (and any server without a `--version` flag) was reported as

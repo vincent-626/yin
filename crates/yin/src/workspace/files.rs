@@ -18,8 +18,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, Focusable as _, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    IntoElement, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement as _, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use yin_git::{Change, FileStatus};
 
@@ -902,14 +903,37 @@ impl Workspace {
                 .overflow_hidden()
                 .child(TextView::new(markdown).size_full().scrollable(true).p_6())
                 .into_any_element(),
-            (FileContent::Text { editor, .. }, None) => Editor::new(editor)
-                // Outside the repository: toolchain sources reached by go to definition.
-                .readonly(std::path::Path::new(&file.path).is_absolute())
-                .bordered(false)
-                .size_full()
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_size(cx.theme().mono_font_size)
-                .into_any_element(),
+            (FileContent::Text { editor, .. }, None) => {
+                let path = file.path.clone();
+                div()
+                    .size_full()
+                    // A double-click starts a drag that selects whole words,
+                    // as in the diff; the editor itself extends by letters.
+                    .capture_any_mouse_down(cx.listener(
+                        move |this, event: &MouseDownEvent, _, _| {
+                            this.word_drag = (event.button == MouseButton::Left
+                                && event.click_count == 2)
+                                .then(|| path.clone());
+                        },
+                    ))
+                    .capture_any_mouse_up(
+                        cx.listener(|this, _: &MouseUpEvent, _, _| this.word_drag = None),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _, _| this.word_drag = None),
+                    )
+                    .child(
+                        Editor::new(editor)
+                            // Outside the repository: toolchain sources reached by go to definition.
+                            .readonly(std::path::Path::new(&file.path).is_absolute())
+                            .bordered(false)
+                            .size_full()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(cx.theme().mono_font_size),
+                    )
+                    .into_any_element()
+            }
         };
         let previewing = file.preview && markdown;
         v_flex()
