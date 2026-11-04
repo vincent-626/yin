@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+## 0.5.1 — 2026-11-04
+
 - Double-click and drag in a file selects whole words, as in the diff.
 - yin checks for a new release at launch and every six hours. When one is
   out, an "Update to …" button in the title bar shows what's new, then
