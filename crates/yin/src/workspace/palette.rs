@@ -65,6 +65,9 @@ fn commands() -> Vec<(&'static str, MakeAction)> {
         ("Default text size", || Box::new(crate::shell::ResetZoom)),
         ("Refresh", || Box::new(Refresh)),
         ("Open repository", || Box::new(crate::shell::Open)),
+        ("Check for updates", || {
+            Box::new(crate::shell::CheckForUpdates)
+        }),
         ("Quit", || Box::new(crate::shell::Quit)),
     ]
 }

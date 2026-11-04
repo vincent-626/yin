@@ -25,7 +25,15 @@ use crate::{state, windows};
 mod actions {
     gpui_kit::actions!(
         yin,
-        [Open, Quit, SwitchRepository, ZoomIn, ZoomOut, ResetZoom]
+        [
+            Open,
+            Quit,
+            SwitchRepository,
+            ZoomIn,
+            ZoomOut,
+            ResetZoom,
+            CheckForUpdates
+        ]
     );
 }
 pub use actions::*;
@@ -45,8 +53,12 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ZoomIn, cx| zoom(Some(1), cx));
     cx.on_action(|_: &ZoomOut, cx| zoom(Some(-1), cx));
     cx.on_action(|_: &ResetZoom, cx| zoom(None, cx));
+    cx.on_action(|_: &CheckForUpdates, cx| crate::updater::check_now(cx));
     cx.set_menus([
-        Menu::new("yin").items([MenuItem::action("Quit yin", Quit)]),
+        Menu::new("yin").items([
+            MenuItem::action("Check for Updates…", CheckForUpdates),
+            MenuItem::action("Quit yin", Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("Switch Repository…", SwitchRepository),
             MenuItem::action("Open Folder…", Open),

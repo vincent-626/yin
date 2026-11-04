@@ -8,6 +8,7 @@ mod shell;
 mod state;
 #[cfg(test)]
 mod tests;
+mod updater;
 mod watcher;
 mod windows;
 mod workspace;
@@ -48,6 +49,7 @@ fn main() {
         // hover cards and menus had no edge; lift them one step.
         Theme::update(cx, |theme| theme.popover = hsla(0., 0., 0.09, 1.));
         shell::restore_zoom(cx);
+        updater::init(cx);
 
         let (pressed, pressed_rx) = async_channel::unbounded::<()>();
         let registered = keymap::global_hotkey().and_then(|key| match key {

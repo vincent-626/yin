@@ -6,6 +6,10 @@ next version.
 ## Unreleased
 
 - Double-click and drag in a file selects whole words, as in the diff.
+- yin checks for a new release at launch and every six hours. When one is
+  out, an "Update to …" button in the title bar shows what's new, then
+  downloads it, checks it against its published checksum, swaps the app in
+  place and restarts. "Check for Updates…" is in the yin menu and the palette.
 
 ## 0.5.0 — 2026-11-03
 

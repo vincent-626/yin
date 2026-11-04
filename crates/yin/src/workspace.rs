@@ -1207,6 +1207,7 @@ impl Workspace {
                         ),
                 )
                 .child(div().flex_1())
+                .children(crate::updater::render_button(cx))
                 .when_some(self.error.clone(), |this, error| {
                     this.child(
                         div()

@@ -67,6 +67,9 @@ window forward if it's open already:
 yin ~/Code/some-repo     # or just `yin` inside one
 ```
 
+After that, yin updates itself: when a release is out, an "Update to …"
+button appears in its title bar.
+
 The app is not notarized, so the installer verifies the download's checksum
 and clears the quarantine flag that would otherwise stop macOS opening it. To
 build from source instead, see [docs/development.md](docs/development.md).
