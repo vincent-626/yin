@@ -5,6 +5,8 @@ next version.
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-05
+
 - Inline blame, as in Zed: the cursor's line in a file shows who last changed
   it, when, and the commit's message. Unsaved lines read as uncommitted.
 - Each file in the changes diff has a Viewed tick, as on GitHub: ticking it
