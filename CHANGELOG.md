@@ -5,6 +5,18 @@ next version.
 
 ## Unreleased
 
+- Inline blame, as in Zed: the cursor's line in a file shows who last changed
+  it, when, and the commit's message. Unsaved lines read as uncommitted.
+- Each file in the changes diff has a Viewed tick, as on GitHub: ticking it
+  marks the file reviewed and folds it; it opens again when the file changes.
+  An Open button beside it opens the file at its first change.
+- `alt-enter` / `alt-space` open the file at the diff line you last clicked,
+  not only at a selected line.
+- Edit a review note with the pencil on its card.
+- A run of commits shows only the newest message, with "Show N more".
+- Fixed: double-click and drag backwards in a file didn't select whole words.
+- Fixed: the underline under the selected sidebar tab sat off to the left.
+
 ## 0.5.1 — 2026-11-04
 
 - Double-click and drag in a file selects whole words, as in the diff.

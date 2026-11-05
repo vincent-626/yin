@@ -513,6 +513,17 @@ impl Repository {
         Ok(history::parse_blame(&output))
     }
 
+    /// Blame for `contents` as the text of `path`, such as an editor's
+    /// unsaved buffer: lines that differ from HEAD aren't committed yet.
+    pub fn blame_contents(&self, path: &str, contents: &str) -> Result<Vec<BlameLine>> {
+        let output = self.run(
+            ["blame", "--porcelain", "--contents", "-", "--", path],
+            Some(contents),
+            &[0],
+        )?;
+        Ok(history::parse_blame(&output))
+    }
+
     /// What a commit changed in one file, following a rename.
     pub fn commit_file_patch(&self, oid: &str, path: &str) -> Result<String> {
         self.git(

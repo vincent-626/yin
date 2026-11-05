@@ -21,6 +21,10 @@ gpui_kit::assets::icon_assets!(
         FoldVertical,
         ChevronsDownUp,
         ChevronsUpDown,
+        Pencil,
+        FileInput,
+        Square,
+        SquareCheck,
     ]
 );
 

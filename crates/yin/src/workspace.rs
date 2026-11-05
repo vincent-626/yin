@@ -37,6 +37,7 @@ mod files;
 mod finder;
 mod git_bar;
 mod history;
+mod inline_blame;
 mod lsp;
 mod marks;
 mod palette;
@@ -312,6 +313,13 @@ pub struct Workspace {
     commit_anchor: Option<usize>,
     /// The History tab compares two branches.
     history_compare: Option<history::Compare>,
+    /// The commit range whose messages are all listed, not just the newest.
+    expanded_range: Option<(usize, usize)>,
+    /// The diff line last clicked, for opening the file there.
+    clicked_line: Option<(
+        annotations::DiffPane,
+        gpui_kit::component::diff::DiffLinePosition,
+    )>,
     /// The branches HEAD's branch is stacked with.
     stack: Option<yin_git::Stack>,
     /// The patch the History diff shows.
@@ -339,6 +347,10 @@ pub struct Workspace {
     history_loaded: bool,
     /// HEAD when the history was read; a change means it is stale.
     history_head: Option<String>,
+    /// Each open file's blame, for the cursor line.
+    line_blame: std::collections::HashMap<String, inline_blame::LineBlame>,
+    /// HEAD when open files were last blamed.
+    blame_head: Option<String>,
     _history_task: Task<()>,
     _commit_task: Task<()>,
     /// The History tab shows only this file's commits.
@@ -485,6 +497,8 @@ impl Workspace {
             commit_selected: None,
             commit_anchor: None,
             history_compare: None,
+            expanded_range: None,
+            clicked_line: None,
             stack: None,
             history_patch: String::new(),
             picking_compare: false,
@@ -505,6 +519,8 @@ impl Workspace {
             history_scroll: UniformListScrollHandle::new(),
             history_loaded: false,
             history_head: None,
+            line_blame: Default::default(),
+            blame_head: None,
             _history_task: Task::ready(()),
             _commit_task: Task::ready(()),
             history_path: None,
@@ -745,7 +761,7 @@ impl Workspace {
                                 && in_progress.is_none();
                         }
                         this.in_progress = in_progress;
-                        this.install_review_hashes(hashes);
+                        this.install_review_hashes(hashes, cx);
                         this.install_status(status, stashes, cx)
                     }
                     Err(error) => this.error = Some(error.to_string().into()),
@@ -768,6 +784,10 @@ impl Workspace {
         self.rebuild_rows(cx);
         if self.history_loaded && self.history_head != self.status.branch.oid {
             self.load_history(cx);
+        }
+        if self.blame_head != self.status.branch.oid {
+            self.blame_head = self.status.branch.oid.clone();
+            self.refresh_all_line_blame(cx);
         }
         self.update_tree_decorations();
         let shape = tree_shape(&self.status);
@@ -1455,7 +1475,6 @@ fn tree_shape(status: &Status) -> Vec<String> {
 /// An icon in front of a sidebar tab's label.
 fn tab_icon(icon: Icon, cx: &App) -> impl IntoElement {
     div()
-        .pl_1()
         .text_color(cx.theme().muted_foreground)
         .child(icon.size_3())
 }

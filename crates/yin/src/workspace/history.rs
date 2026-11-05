@@ -701,7 +701,11 @@ impl Workspace {
             Some(compare) => format!("{} since {}", self.ref_label(&compare.head), compare.base),
             None => count(commits.len(), "commit"),
         };
-        const LISTED: usize = 8;
+        // The newest message only, unless asked for the rest.
+        const MOST: usize = 200;
+        let expanded = self.expanded_range == Some((newest, oldest));
+        let listed = if expanded { MOST } else { 1 };
+        let hidden = commits.len().saturating_sub(listed);
         let muted = cx.theme().muted_foreground;
         v_flex()
             .size_full()
@@ -716,20 +720,42 @@ impl Workspace {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(div().text_lg().font_semibold().child(title))
-                    .children(commits.iter().take(LISTED).map(|commit| {
-                        h_flex()
-                            .gap_2()
-                            .text_sm()
-                            .min_w_0()
-                            .child(super::style::hash(&commit.short_oid, cx))
-                            .child(div().min_w_0().truncate().child(commit.subject.clone()))
-                    }))
-                    .when(commits.len() > LISTED, |this| {
+                    .child(
+                        v_flex()
+                            .id("range-commits")
+                            .gap_1()
+                            .max_h_64()
+                            .overflow_y_scroll()
+                            .children(commits.iter().take(listed).map(|commit| {
+                                h_flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .min_w_0()
+                                    .child(super::style::hash(&commit.short_oid, cx))
+                                    .child(div().min_w_0().truncate().child(commit.subject.clone()))
+                            })),
+                    )
+                    .when(commits.len() > 1, |this| {
                         this.child(
                             div()
+                                .id("range-more")
                                 .text_xs()
                                 .text_color(muted)
-                                .child(format!("and {} more", commits.len() - LISTED)),
+                                .cursor_pointer()
+                                .hover(|this| this.text_color(cx.theme().foreground))
+                                .child(if expanded {
+                                    "Show less".to_owned()
+                                } else {
+                                    format!("Show {hidden} more")
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.expanded_range = if expanded {
+                                        None
+                                    } else {
+                                        Some((newest, oldest))
+                                    };
+                                    cx.notify();
+                                })),
                         )
                     })
                     .child(

@@ -8,12 +8,13 @@ use std::sync::Arc;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     diff::{Diff, DiffFile},
     h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, Window, div,
+    AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use yin_git::FileStatus;
 
@@ -52,8 +53,19 @@ impl Workspace {
                             this.all_patch = patch;
                             this.follow_notes();
                             this.research_diff(DiffPane::Changes, cx);
-                            this.all_diff
-                                .update(cx, |diff, cx| diff.set_files(files, cx));
+                            let reviewed = this.reviewed.clone();
+                            this.all_diff.update(cx, |diff, cx| {
+                                let before: std::collections::HashSet<String> = diff
+                                    .files()
+                                    .iter()
+                                    .map(|file| file.path().to_string())
+                                    .collect();
+                                diff.set_files(files, cx);
+                                // Viewed files arrive folded, as on GitHub.
+                                for path in reviewed.iter().filter(|path| !before.contains(*path)) {
+                                    diff.set_file_collapsed(path, true, cx);
+                                }
+                            });
                             this.schedule_relayout(cx);
                         }
                     }
@@ -69,15 +81,24 @@ impl Workspace {
     /// selected file at its first change.
     pub(super) fn open_in_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active_pane();
-        let selected = pane.and_then(|pane| match pane {
-            DiffPane::Changes => self.all_diff.read(cx).selected_lines(),
-            DiffPane::History => self.history_diff.read(cx).selected_lines(),
+        let selected = pane.and_then(|pane| {
+            let selected = self
+                .diff_in(pane)
+                .read(cx)
+                .selected_lines()
+                .map(|range| (range.path().to_string(), range.end_side(), range.end()));
+            // Else the line last clicked in this diff.
+            selected.or_else(|| {
+                self.clicked_line
+                    .as_ref()
+                    .filter(|(clicked, _)| *clicked == pane)
+                    .map(|(_, at)| (at.path().to_string(), at.side(), at.line()))
+            })
         });
         let target = match selected {
-            Some(range) => {
-                let path = range.path().to_string();
-                let line = match range.end_side() {
-                    gpui_kit::component::diff::DiffSide::Modified => Some(range.end()),
+            Some((path, side, end)) => {
+                let line = match side {
+                    gpui_kit::component::diff::DiffSide::Modified => Some(end),
                     // A deleted line: where it was, in the file as it is now.
                     _ => {
                         let patch = match pane {
@@ -85,19 +106,13 @@ impl Workspace {
                             _ => &self.all_patch,
                         };
                         yin_git::FilePatch::of_file(patch, &path, yin_git::Side::Old)
-                            .and_then(|file| file.map_line(yin_git::Side::Old, range.end()))
+                            .and_then(|file| file.map_line(yin_git::Side::Old, end))
                     }
                 };
                 Some((path, line))
             }
             None if self.panel == super::Panel::Changes => self.selected_key().map(|key| {
-                let line =
-                    yin_git::FilePatch::of_file(&self.all_patch, &key.path, yin_git::Side::New)
-                        .and_then(|file| {
-                            file.rows()
-                                .find(|row| row.kind != yin_git::RowKind::Context)
-                                .and_then(|row| row.new_line.or(row.old_line))
-                        });
+                let line = self.first_change(&key.path);
                 (key.path, line)
             }),
             None => None,
@@ -105,16 +120,47 @@ impl Workspace {
         let Some((path, line)) = target else {
             return;
         };
-        if !self.repo.workdir().join(&path).is_file() {
+        self.open_at(&path, line, window, cx);
+    }
+
+    /// Opens `path` from its header in the changes diff, at its first change.
+    pub(super) fn open_path_in_file(
+        &mut self,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let line = self.first_change(path);
+        self.open_at(path, line, window, cx);
+    }
+
+    fn first_change(&self, path: &str) -> Option<usize> {
+        yin_git::FilePatch::of_file(&self.all_patch, path, yin_git::Side::New).and_then(|file| {
+            file.rows()
+                .find(|row| row.kind != yin_git::RowKind::Context)
+                .and_then(|row| row.new_line.or(row.old_line))
+        })
+    }
+
+    fn open_at(
+        &mut self,
+        path: &str,
+        line: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.repo.workdir().join(path).is_file() {
             window.push_notification(format!("{path} isn't in the working tree."), cx);
             return;
         }
         self.show_panel(super::Panel::Files, window, cx);
-        self.open_file(&path, line.map(|line| line as u32), window, cx);
+        self.open_file(path, line.map(|line| line as u32), window, cx);
     }
 
     /// Brings the selected file into view in the combined diff.
     pub(super) fn scroll_all_diff_to_selection(&mut self, cx: &mut Context<Self>) {
+        // Picking a file moves on from the line clicked before.
+        self.clicked_line = None;
         if let Some(key) = self.selected_key() {
             self.all_diff
                 .update(cx, |diff, cx| diff.scroll_to_file(&key.path, cx));
@@ -171,6 +217,7 @@ impl Workspace {
                 Diff::new(&self.all_diff).line_number(true).render_header({
                     let state = self.all_diff.clone();
                     let whole = self.whole_files.clone();
+                    let reviewed = self.reviewed.clone();
                     let owner = cx.entity().downgrade();
                     move |file, _, cx| {
                         let staged =
@@ -182,7 +229,12 @@ impl Workspace {
                                 });
                         let path = file.path().to_string();
                         let is_whole = whole.contains(&path);
-                        let owner = owner.clone();
+                        let viewed = reviewed.contains(&path);
+                        let (open_owner, view_owner, owner) =
+                            (owner.clone(), owner.clone(), owner.clone());
+                        let (open_path, view_path) = (path.clone(), path.clone());
+                        let viewed_id = SharedString::from(format!("viewed-{path}"));
+                        let viewed_box = SharedString::from(format!("viewed-box-{path}"));
                         h_flex()
                             .w_full()
                             .min_w_0()
@@ -192,6 +244,26 @@ impl Workspace {
                                     .flex_1()
                                     .min_w_0()
                                     .child(style::diff_file_header(file, &state, staged, cx)),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("open-{path}")))
+                                    .cursor_pointer()
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(Icon::empty().path("icons/file-input.svg"))
+                                    .tooltip_with_action(
+                                        "Open the file",
+                                        &super::OpenInFile,
+                                        Some("Workspace"),
+                                    )
+                                    .on_click(move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        open_owner
+                                            .update(cx, |this, cx| {
+                                                this.open_path_in_file(&open_path, window, cx)
+                                            })
+                                            .ok();
+                                    }),
                             )
                             .child(
                                 Button::new(SharedString::from(format!("whole-{path}")))
@@ -216,6 +288,28 @@ impl Workspace {
                                             })
                                             .ok();
                                     }),
+                            )
+                            .child(
+                                div()
+                                    .id(viewed_id)
+                                    .pl_1()
+                                    .pr_2()
+                                    .on_click(|_, _, cx| cx.stop_propagation())
+                                    .child(
+                                        Checkbox::new(viewed_box)
+                                            .small()
+                                            .cursor_pointer()
+                                            .checked(viewed)
+                                            .label("Viewed")
+                                            .on_click(move |checked, _, cx| {
+                                                cx.stop_propagation();
+                                                view_owner
+                                                    .update(cx, |this, cx| {
+                                                        this.set_viewed(&view_path, *checked, cx)
+                                                    })
+                                                    .ok();
+                                            }),
+                                    ),
                             )
                     }
                 }),

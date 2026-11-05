@@ -25,10 +25,22 @@ pub(super) fn hash_changed_files(
 }
 
 impl Workspace {
-    pub(super) fn install_review_hashes(&mut self, hashes: HashMap<String, u64>) {
+    pub(super) fn install_review_hashes(
+        &mut self,
+        hashes: HashMap<String, u64>,
+        cx: &mut Context<Self>,
+    ) {
         self.reviews.prune(&hashes);
-        self.reviewed = Arc::new(self.reviews.reviewed(&hashes));
+        let reviewed = Arc::new(self.reviews.reviewed(&hashes));
+        // A viewed file that changed since opens again, as on GitHub.
+        let changed: Vec<String> = self.reviewed.difference(&reviewed).cloned().collect();
+        self.reviewed = reviewed;
         self.review_hashes = hashes;
+        self.all_diff.update(cx, |diff, cx| {
+            for path in &changed {
+                diff.set_file_collapsed(path, false, cx);
+            }
+        });
     }
 
     /// Paths hidden from the Changes list.
@@ -59,6 +71,23 @@ impl Workspace {
         if !self.hide_reviewed {
             self.select(next, cx);
         }
+    }
+
+    /// The Viewed tick in `path`'s header in the changes diff: a viewed
+    /// file folds to its header, as on GitHub.
+    pub(super) fn set_viewed(&mut self, path: &str, viewed: bool, cx: &mut Context<Self>) {
+        if viewed {
+            let Some(hash) = self.review_hashes.get(path) else {
+                return;
+            };
+            self.reviews.mark(path, *hash);
+        } else {
+            self.reviews.unmark(path);
+        }
+        self.reviewed = Arc::new(self.reviews.reviewed(&self.review_hashes));
+        self.all_diff
+            .update(cx, |diff, cx| diff.set_file_collapsed(path, viewed, cx));
+        self.rebuild_rows(cx);
     }
 
     pub(super) fn mark_all_reviewed(&mut self, cx: &mut Context<Self>) {

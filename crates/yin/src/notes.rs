@@ -118,6 +118,13 @@ impl Notes {
         self.save();
     }
 
+    pub fn set_body(&mut self, id: u64, body: String) {
+        if let Some(note) = self.items.iter_mut().find(|note| note.id == id) {
+            note.body = body;
+            self.save();
+        }
+    }
+
     pub fn clear(&mut self) {
         self.items.clear();
         self.save();

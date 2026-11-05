@@ -436,6 +436,7 @@ impl Workspace {
             self.attach_language_server(&path, language_for(&path), &editor, window, cx);
         }
         self.mark_search_matches(ix, cx);
+        self.refresh_line_blame(&path, false, cx);
     }
 
     /// Paths of open files with unsaved edits.
@@ -464,6 +465,7 @@ impl Workspace {
                 markdown.update(cx, |markdown, cx| markdown.set_text(&value, cx));
             }
             self.sync_edited_file(path, &value);
+            self.refresh_line_blame(path, true, cx);
             cx.notify();
         }
     }
@@ -707,7 +709,8 @@ impl Workspace {
             return;
         }
         self.close_in_language_server(&self.open_files[ix].path);
-        self.open_files.remove(ix);
+        let file = self.open_files.remove(ix);
+        self.line_blame.remove(&file.path);
         self.active_file = match self.active_file {
             _ if self.open_files.is_empty() => None,
             Some(active) if active > ix => Some(active - 1),
@@ -905,7 +908,9 @@ impl Workspace {
                 .into_any_element(),
             (FileContent::Text { editor, .. }, None) => {
                 let path = file.path.clone();
+                let line_blame = self.render_line_blame(&path, editor, cx);
                 div()
+                    .relative()
                     .size_full()
                     // A double-click starts a drag that selects whole words,
                     // as in the diff; the editor itself extends by letters.
@@ -917,11 +922,11 @@ impl Workspace {
                         },
                     ))
                     .capture_any_mouse_up(
-                        cx.listener(|this, _: &MouseUpEvent, _, _| this.word_drag = None),
+                        cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_word_drag(cx)),
                     )
                     .on_mouse_up_out(
                         MouseButton::Left,
-                        cx.listener(|this, _: &MouseUpEvent, _, _| this.word_drag = None),
+                        cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_word_drag(cx)),
                     )
                     .child(
                         Editor::new(editor)
@@ -932,6 +937,7 @@ impl Workspace {
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_size(cx.theme().mono_font_size),
                     )
+                    .children(line_blame)
                     .into_any_element()
             }
         };

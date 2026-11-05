@@ -37,6 +37,8 @@ pub(super) struct NoteDraft {
     pane: DiffPane,
     note: Note,
     input: Entity<TextareaState>,
+    /// Changing this saved note rather than adding one.
+    editing: Option<u64>,
 }
 
 /// What an annotation shows.
@@ -104,10 +106,49 @@ impl Workspace {
         };
         let side = if old_side { Side::Old } else { Side::New };
         let code = FilePatch::lines_in(patch, &path, side, start, end);
+        let note = Note {
+            id: 0,
+            path,
+            old_side,
+            start,
+            end,
+            body: String::new(),
+            code,
+            on_commits: pane == DiffPane::History,
+            outdated: false,
+        };
+        self.open_note_draft(pane, note, None, window, cx);
+        self.diff_in(pane)
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
+    }
+
+    /// Reopens saved note `id` in the note box to change its text.
+    fn edit_note(&mut self, id: u64, pane: DiffPane, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(note) = self
+            .notes
+            .items()
+            .iter()
+            .find(|note| note.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.open_note_draft(pane, note, Some(id), window, cx);
+    }
+
+    fn open_note_draft(
+        &mut self,
+        pane: DiffPane,
+        note: Note,
+        editing: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("What should change here?")
                 .auto_grow(2, 10)
+                .default_value(note.body.clone())
         });
         cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::PressEnter {
@@ -118,24 +159,18 @@ impl Workspace {
             }
         })
         .detach();
+        input.update(cx, |input, cx| {
+            // Editing carries on from the end of the note.
+            let end = input.value().len();
+            input.set_selected_range(end..end, cx);
+        });
         input.read(cx).focus_handle(cx).focus(window, cx);
         self.note_draft = Some(NoteDraft {
             pane,
-            note: Note {
-                id: 0,
-                path,
-                old_side,
-                start,
-                end,
-                body: String::new(),
-                code,
-                on_commits: pane == DiffPane::History,
-                outdated: false,
-            },
+            note,
             input,
+            editing,
         });
-        self.diff_in(pane)
-            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         cx.notify();
     }
 
@@ -144,10 +179,16 @@ impl Workspace {
             return;
         };
         let body = draft.input.read(cx).value().trim().to_owned();
-        if !body.is_empty() {
-            self.notes.add(Note { body, ..draft.note });
-            self.place_history_notes();
+        match draft.editing {
+            // Emptied: the note goes.
+            Some(id) if body.is_empty() => self.notes.remove(id),
+            Some(id) => self.notes.set_body(id, body),
+            None if body.is_empty() => {}
+            None => {
+                self.notes.add(Note { body, ..draft.note });
+            }
         }
+        self.place_history_notes();
         self.focus_diff(window, cx);
         cx.notify();
     }
@@ -295,13 +336,19 @@ impl Workspace {
         let items = Rc::new(items);
         let owner = cx.entity().downgrade();
         let add_owner = owner.clone();
+        let click_owner = owner.clone();
         diff.annotations(annotations)
+            .on_line_click(move |at, _, _, cx| {
+                click_owner
+                    .update(cx, |this, _| this.clicked_line = Some((pane, at.clone())))
+                    .ok();
+            })
             .render_annotation(move |annotation, _, cx| {
                 let Some((_, item)) = items.iter().find(|(id, _)| id == annotation.id()) else {
                     return div().into_any_element();
                 };
                 match item {
-                    Item::Note(note, _) => render_note(note, &owner, cx),
+                    Item::Note(note, _) => render_note(note, pane, &owner, cx),
                     Item::Thread(thread) => render_thread(thread, cx),
                 }
             })
@@ -340,7 +387,15 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("Note on {}", draft.note.location())),
+                        .child(format!(
+                            "{} on {}",
+                            if draft.editing.is_some() {
+                                "Editing note"
+                            } else {
+                                "Note"
+                            },
+                            draft.note.location()
+                        )),
                 )
                 .child(Textarea::new(&draft.input).small())
                 .child(
@@ -369,7 +424,11 @@ impl Workspace {
                                 .cursor_pointer()
                                 .primary()
                                 .small()
-                                .label("Add note")
+                                .label(if draft.editing.is_some() {
+                                    "Save"
+                                } else {
+                                    "Add note"
+                                })
                                 .children(Kbd::binding_for_action(
                                     &super::Commit,
                                     Some("Workspace"),
@@ -478,10 +537,12 @@ fn card(cx: &gpui_kit::App) -> gpui_kit::Div {
 
 fn render_note(
     note: &Note,
+    pane: DiffPane,
     owner: &gpui_kit::WeakEntity<Workspace>,
     cx: &mut gpui_kit::App,
 ) -> AnyElement {
     let (owner, id) = (owner.clone(), note.id);
+    let edit_owner = owner.clone();
     let muted = cx.theme().muted_foreground;
     card(cx)
         .child(
@@ -499,6 +560,19 @@ fn render_note(
                     )
                 })
                 .child(div().flex_1())
+                .child(
+                    Button::new(ElementId::from(format!("edit-note-{id}")))
+                        .cursor_pointer()
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::empty().path("icons/pencil.svg"))
+                        .tooltip("Edit note")
+                        .on_click(move |_, window, cx| {
+                            edit_owner
+                                .update(cx, |this, cx| this.edit_note(id, pane, window, cx))
+                                .ok();
+                        }),
+                )
                 .child(
                     Button::new(ElementId::from(format!("delete-note-{id}")))
                         .cursor_pointer()

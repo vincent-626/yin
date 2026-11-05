@@ -70,6 +70,23 @@ impl Workspace {
     }
 
     /// Highlights the other places the selected text appears in `path`.
+    /// Ends a double-click drag in `path`, snapping its selection to whole
+    /// words.
+    pub(super) fn end_word_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.word_drag.take() else {
+            return;
+        };
+        if let Some((_, editor)) = self
+            .open_files
+            .iter()
+            .find(|file| file.path == path)
+            .and_then(|file| file.editor())
+        {
+            let editor = editor.clone();
+            snap_to_words(&editor, cx);
+        }
+    }
+
     pub(super) fn mark_selection(&mut self, path: &str, cx: &mut Context<Self>) {
         let Some(ix) = self.open_files.iter().position(|file| file.path == path) else {
             return;
@@ -79,17 +96,12 @@ impl Workspace {
         };
         let editor = editor.clone();
         let mut selected = editor.read(cx).selected_range();
-        if self.word_drag.as_deref() == Some(path) && !selected.is_empty() {
-            let snapped = {
-                let text = editor.read(cx).value();
-                word_start(&text, selected.start)..word_end(&text, selected.end)
-            };
-            if snapped != selected {
-                editor.update(cx, |editor, cx| {
-                    editor.set_selected_range(snapped.clone(), cx)
-                });
-                selected = snapped;
-            }
+        // Dragging backwards the cursor is at the start, and the editor
+        // can't be given a selection that way round: it keeps the clicked
+        // word itself, and the start snaps when the mouse comes up.
+        let backwards = editor.read(cx).cursor() == selected.start;
+        if self.word_drag.as_deref() == Some(path) && !backwards {
+            selected = snap_to_words(&editor, cx);
         }
         if self.open_files[ix].marks.selected == selected {
             return;
@@ -108,6 +120,24 @@ impl Workspace {
         let marks = fills(&ranges, color);
         set_marks(&mut self.open_files[ix].marks.selection, &editor, marks, cx);
     }
+}
+
+/// Widens `editor`'s selection to whole words; returns it.
+fn snap_to_words(editor: &Entity<EditorState>, cx: &mut Context<Workspace>) -> Range<usize> {
+    let selected = editor.read(cx).selected_range();
+    if selected.is_empty() {
+        return selected;
+    }
+    let snapped = {
+        let text = editor.read(cx).value();
+        word_start(&text, selected.start)..word_end(&text, selected.end)
+    };
+    if snapped != selected {
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_range(snapped.clone(), cx)
+        });
+    }
+    snapped
 }
 
 fn fills(ranges: &[Range<usize>], color: Hsla) -> Vec<RangeDecoration> {

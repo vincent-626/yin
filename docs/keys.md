@@ -48,6 +48,8 @@ current key.
 | `space` | Stage the selected lines, or unstage them when they're all staged |
 | `s` | The same for their whole hunk |
 | `n`, or the + beside a line | Write a review note on the selected lines (`cmd-enter` adds it) |
+| `alt-enter` / `alt-space` | Open the file at the selected or last clicked line |
+| `cmd-f` | Find in the changes |
 
 ## History, files and search
 

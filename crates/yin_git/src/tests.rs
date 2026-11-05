@@ -697,6 +697,16 @@ fn blame_and_file_history() {
     fx.write("f.txt", "one\nTWO\nthree\n");
 
     let blame = fx.repo.blame("f.txt").unwrap();
+    // An unsaved buffer: its edited line isn't committed, the rest are.
+    let mut edited: Vec<String> = blame.iter().map(|line| line.text.clone()).collect();
+    edited[0] = "edited".into();
+    let unsaved = fx
+        .repo
+        .blame_contents("f.txt", &(edited.join("\n") + "\n"))
+        .unwrap();
+    assert_eq!(unsaved.len(), 3);
+    assert!(!unsaved[0].is_committed());
+    assert_eq!(unsaved[1].summary, "shout two");
     assert_eq!(blame.len(), 3);
     assert_eq!(blame[0].summary, "initial");
     assert_eq!(blame[0].author, "Yin Test");
