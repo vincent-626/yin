@@ -1,3 +1,4 @@
+// Modified by yin (https://github.com/vincent-626/yin); see vendor/README.md.
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -215,6 +216,8 @@ pub struct DiffState {
     resolutions: HashMap<(SharedString, usize), DiffConflictResolution>,
     file_rows: Vec<FileRows>,
     header_rows: Vec<usize>,
+    /// The pinned header's height when last painted (a yin change).
+    pinned_height: Rc<std::cell::Cell<Pixels>>,
     rows: Rc<Vec<DisplayRow>>,
     change_rows: Vec<usize>,
     list: ListState,
@@ -346,6 +349,7 @@ impl DiffState {
             resolutions: HashMap::new(),
             file_rows: Vec::new(),
             header_rows: Vec::new(),
+            pinned_height: Rc::default(),
             rows: Rc::default(),
             change_rows: Vec::new(),
             list: ListState::new(0, ListAlignment::Top, px(0.)),
@@ -564,6 +568,15 @@ impl DiffState {
     pub(crate) fn rows(&self) -> &Rc<Vec<DisplayRow>> {
         &self.rows
     }
+    /// Each file's header row, in file order.
+    pub(crate) fn header_rows(&self) -> &[usize] {
+        &self.header_rows
+    }
+
+    pub(crate) fn pinned_height(&self) -> &Rc<std::cell::Cell<Pixels>> {
+        &self.pinned_height
+    }
+
     pub(crate) fn list(&self) -> &ListState {
         &self.list
     }

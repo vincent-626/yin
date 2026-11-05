@@ -23,6 +23,14 @@ extensions, settings UI, collaboration, AI chat, being a general editor.
 - GitHub goes through the `gh` CLI, which owns sign-in. yin reads pull requests
   and opens them when asked; it never posts comments.
 
+## Vendored gpui-component
+
+yin builds against `vendor/gpui-component`, a copy of gpui-component 0.8.1
+(Apache-2.0) patched in through `[patch.crates-io]`. Change it there when the
+published crate is the problem; mark each changed file with the "Modified by
+yin" comment at its top and list the change in `vendor/README.md`. Keep its
+licence file. It is excluded from the workspace, so clippy and tests skip it.
+
 ## References (read, don't depend)
 
 `ref/` holds shallow clones, gitignored. Create them with `script/bootstrap-refs`.
@@ -30,7 +38,7 @@ extensions, settings UI, collaboration, AI chat, being a general editor.
 - `ref/gpui-component` — the UI library we use, at its latest commit, which
   is ahead of the gpui-kit 0.8.1 we build against: an API seen there may not
   exist yet (the diff's line decorations don't). Check
-  `~/.cargo/registry/src/*/gpui-component-0.8.1` before relying on one. Its
+  `vendor/gpui-component` (what yin builds) before relying on one. Its
   `examples/` are the best API docs: `tig` (git history + Diff), `editor`,
   `markdown`, `dock`, `sidebar`. Component sources live in
   `crates/component/src/`.
@@ -70,8 +78,6 @@ panics on wakeups from other threads.
 
 ## Known GPUI / gpui-kit traps
 
-- The first character typed right after `cmd-f` in the editor is lost: the find
-  bar re-selects its query (`input/overlay.rs`, `query_echo`). Upstream.
 - `windows::open` defers; outside an update (at launch) use `open_now`, or the
   deferral waits for the next event.
 - The diff binds single letters (space, s, n), so text inputs can't live inside
@@ -83,8 +89,9 @@ panics on wakeups from other threads.
 - The Diff recompiles each language's highlight query on every update (about
   7% of a core while an agent writes). `DiffState::set_syntax_highlighter`
   can't fix it from yin without changing output: the public path highlights
-  injected languages and merges overlaps differently. The fix is upstream:
-  keep `SyntaxHighlighters` across updates in `ensure_presentation`.
+  injected languages and merges overlaps differently. The fix belongs in
+  `vendor/gpui-component`: keep `SyntaxHighlighters` across updates in
+  `ensure_presentation`.
 
 ## Toolchain
 

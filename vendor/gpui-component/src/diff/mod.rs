@@ -1,3 +1,4 @@
+// Modified by yin (https://github.com/vincent-626/yin); see vendor/README.md.
 //! Readonly, virtualized patch display inspired by Diffs from Pierre.
 //! Parse an externally supplied patch into [`DiffFile`]s, retain one
 //! [`DiffState`] for all of them in the owner, and build [`Diff`] during rendering.
@@ -552,6 +553,13 @@ fn render_diff(
     let scrollbar = state.list().clone();
     let horizontal = state.horizontal_scroll().clone();
     let has_rows = !rows.is_empty();
+    let pinned = props
+        .header_visible
+        .then(|| pinned_header(&rows, state.header_rows(), &scrollbar))
+        .flatten()
+        .map(|(file, next_top)| {
+            render_pinned_header(file, next_top, code.clone(), state.pinned_height(), cx)
+        });
     let label = match state.files() {
         [file] => t!("Diff.Viewer", name = file.path().as_str()).to_string(),
         files => t!("Diff.ViewerFiles", count = files.len()).to_string(),
@@ -590,6 +598,7 @@ fn render_diff(
             state.selection().clone(),
             state.geometry().clone(),
         ))
+        .children(pinned)
         .when(has_rows && !soft_wrap, |this| {
             this.child(
                 ScrollableMask::new(Axis::Horizontal, &horizontal).id("diff-horizontal-wheel"),
@@ -1133,9 +1142,28 @@ fn render_file_header(
             .children(file_annotations(file, code, window, cx))
             .into_any_element();
     }
+    let border = cx.theme().border;
+    v_flex()
+        .id("file-header")
+        .w_full()
+        .when(file > 0, |this| this.border_t_1())
+        .border_b_1()
+        .border_color(border)
+        .child(file_header_bar(file, code, window, cx))
+        .children(file_annotations(file, code, window, cx))
+        .into_any_element()
+}
+
+/// The header's row: the fold toggle and its content. Also drawn pinned at
+/// the top while the file's lines scroll under it (a yin change).
+fn file_header_bar(
+    file: usize,
+    code: &CodePresentation,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement + use<> {
     let document = &code.files[file];
     let foreground = cx.theme().muted_foreground;
-    let border = cx.theme().border;
     let collapsed = code.state.read(cx).is_file_collapsed(document.path());
     let content = if let Some(render) = &code.header.content {
         render(document, window, cx)
@@ -1193,45 +1221,98 @@ fn render_file_header(
             .into_any_element()
     };
     let state = code.state.clone();
-    let name = document.path().clone();
-    v_flex()
-        .id("file-header")
+    let name = code.files[file].path().clone();
+    h_flex()
         .w_full()
-        .when(file > 0, |this| this.border_t_1())
-        .border_b_1()
-        .border_color(border)
+        .min_w_0()
+        .pl_1()
+        .pr_3()
+        .py_1()
+        .gap_1()
         .child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .pl_1()
-                .pr_3()
-                .py_1()
-                .gap_1()
-                .child(
-                    Button::new("collapse-file")
-                        .ghost()
-                        .xsmall()
-                        .icon(if collapsed {
-                            IconName::ChevronRight
-                        } else {
-                            IconName::ChevronDown
-                        })
-                        .accessibility_label(
-                            if collapsed {
-                                t!("Diff.ExpandFile", name = name.as_str())
-                            } else {
-                                t!("Diff.CollapseFile", name = name.as_str())
-                            }
-                            .to_string(),
-                        )
-                        .on_click(move |_, _, cx| {
-                            state.update(cx, |state, cx| state.toggle_file_collapsed(file, cx))
-                        }),
+            Button::new("collapse-file")
+                .ghost()
+                .xsmall()
+                .icon(if collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .accessibility_label(
+                    if collapsed {
+                        t!("Diff.ExpandFile", name = name.as_str())
+                    } else {
+                        t!("Diff.CollapseFile", name = name.as_str())
+                    }
+                    .to_string(),
                 )
-                .child(div().flex_1().min_w_0().child(content)),
+                .on_click(move |_, _, cx| {
+                    state.update(cx, |state, cx| state.toggle_file_collapsed(file, cx))
+                }),
         )
-        .children(file_annotations(file, code, window, cx))
+        .child(div().flex_1().min_w_0().child(content))
+}
+
+/// The file whose lines are at the top of the list, when its header has
+/// scrolled away (a yin change), and how far below the list's top the next
+/// file's header is, which pushes the pinned one up as it arrives.
+fn pinned_header(
+    rows: &[DisplayRow],
+    header_rows: &[usize],
+    list: &gpui::ListState,
+) -> Option<(usize, Option<Pixels>)> {
+    let top = list.logical_scroll_top();
+    let row = rows.get(top.item_ix)?;
+    if matches!(row, DisplayRow::File(_)) && top.offset_in_item <= px(0.) {
+        return None;
+    }
+    let file = row.file();
+    let next_top = header_rows
+        .get(file + 1)
+        .and_then(|ix| list.bounds_for_item(*ix))
+        .map(|bounds| bounds.top() - list.viewport_bounds().top());
+    Some((file, next_top))
+}
+
+fn render_pinned_header(
+    file: usize,
+    next_top: Option<Pixels>,
+    code: Rc<CodePresentation>,
+    height: &Rc<std::cell::Cell<Pixels>>,
+    cx: &App,
+) -> AnyElement {
+    let measured = height.get();
+    let shift = next_top
+        .map(|top| (top - measured).min(px(0.)))
+        .unwrap_or_default();
+    let height = height.clone();
+    div()
+        .id("pinned-file-header")
+        .absolute()
+        .top(shift)
+        .left_0()
+        .w_full()
+        .bg(cx.theme().background)
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .occlude()
+        // Built at layout, like the list's rows: the header's renderers read
+        // the diff state, which is still being updated here.
+        .child(
+            gpui::uniform_list("pinned-file-header-bar", 1, move |_, window, cx| {
+                vec![file_header_bar(file, &code, window, cx).into_any_element()]
+            })
+            .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+            .w_full(),
+        )
+        .child(
+            gpui::canvas(
+                move |bounds, _, _| height.set(bounds.size.height),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
         .into_any_element()
 }
 
@@ -1679,8 +1760,15 @@ fn code_line(
         code.hover_highlight,
         DiffHoverHighlight::Line | DiffHoverHighlight::Both
     );
-    let add_button =
-        add_annotation_button(file, side, ix, gutters_width + code.rem / 2., &code, cx);
+    // yin: over the last line number, as on GitHub, instead of over the
+    // start of the code. The row's left padding is half a rem.
+    let add_left = if code.line_number && gutters_width > px(0.) {
+        code.rem / 2. + gutters_width - code.gutter_width
+            + (code.gutter_width - code.row_height).max(px(0.)) / 2.
+    } else {
+        gutters_width + code.rem / 2.
+    };
+    let add_button = add_annotation_button(file, side, ix, add_left, &code, cx);
     h_flex()
         .id("line-row")
         .group("diff-line")

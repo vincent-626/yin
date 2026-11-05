@@ -97,13 +97,13 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 Known issues, all in the UI component library yin builds on:
 
-- The first character typed right after `cmd-f` in the editor is sometimes lost.
 - Hover cards draw a code block's language label over its first line.
 
 ## Built with
 
 - [GPUI](https://github.com/zed-industries/zed) from Zed, via
   [gpui-kit and gpui-component](https://github.com/longbridge/gpui-component)
+  (yin carries a lightly patched copy of gpui-component in `vendor/`)
 - The `git` command line for every git operation, so hooks, signing and
   credentials behave as they do in a terminal
 - [ignore](https://crates.io/crates/ignore) and

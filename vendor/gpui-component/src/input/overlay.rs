@@ -1,3 +1,4 @@
+// Modified by yin (https://github.com/vincent-626/yin); see vendor/README.md.
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -359,7 +360,9 @@ impl<M: OverlayMode> InputOverlayHost<M> {
                 && was.open
                 && (was.replace_mode == search_signature.replace_mode
                     || panel_replace_mode == search_signature.replace_mode)
-                && was.anchor_offset == search_signature.anchor_offset
+                // yin: typing moves the anchor to the visible range, which the
+                // match then scrolls; that is still the panel's own echo. Every
+                // cmd-f advances activation_revision, so it isn't missed.
                 && was.activation_revision == search_signature.activation_revision
                 && self.search.read(cx).query(cx) == search_session.query;
             self.search_signature = search_signature;

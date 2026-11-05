@@ -14,6 +14,12 @@ next version.
   not only at a selected line.
 - Edit a review note with the pencil on its card.
 - A run of commits shows only the newest message, with "Show N more".
+- A file's header stays pinned at the top of the diff while you scroll
+  through its lines, until the next file's header pushes it away.
+- The + for a review note appears over the line number instead of over the
+  code.
+- Fixed: letters typed right after `cmd-f` in a file could replace each other
+  in the find bar.
 - Fixed: double-click and drag backwards in a file didn't select whole words.
 - Fixed: the underline under the selected sidebar tab sat off to the left.
 
