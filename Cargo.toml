@@ -2,6 +2,8 @@
 resolver = "2"
 members = ["crates/yin", "crates/yin_fs", "crates/yin_git", "crates/yin_lsp"]
 default-members = ["crates/yin"]
+# Third-party code we patch; not ours to lint or test.
+exclude = ["vendor"]
 
 [workspace.package]
 edition = "2024"
@@ -31,6 +33,10 @@ gpui-kit = { version = "=0.8.1", features = [
     "tree-sitter-css",
     "tree-sitter-html",
 ] }
+
+# gpui-component 0.8.1 with yin's changes; see vendor/README.md.
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
 
 # Dependencies are optimized so the dev build still feels like the real app.
 [profile.dev.package."*"]
